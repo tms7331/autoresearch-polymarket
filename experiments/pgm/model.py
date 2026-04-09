@@ -157,7 +157,7 @@ class SemanticEventGraph(PredictionModel):
 
         # 4. Embed markets and find parent event nodes
         print("  Linking markets to event nodes...")
-        market_texts = [f"{m.question} {m.description[:200]}" for m in dataset.markets]
+        market_texts = [f"{m.question} {m.description[:500]}" for m in dataset.markets]
         market_embs = (
             self.embedder.encode(market_texts, show_progress_bar=False,
                                  normalize_embeddings=True)
@@ -393,7 +393,7 @@ class SemanticEventGraph(PredictionModel):
             pairs.append((raw, m.market_price))
         pairs.sort(key=lambda x: x[0])
 
-        n_bins = 20
+        n_bins = 30
         self._cal_bins = []
         bin_size = max(1, len(pairs) // n_bins)
         for i in range(0, len(pairs), bin_size):
