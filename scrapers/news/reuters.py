@@ -132,37 +132,38 @@ def scrape() -> list[str]:
         if not article_urls:
             return []
 
-        # --- Session 2: Extract article content ---
-        print("  [reuters] Session 2: extracting articles...")
-        browser2, page2 = connect(pw)
+        # --- Extract articles: one fresh session per article ---
+        # Browserbase CDP only fully renders the first page load per
+        # session. Subsequent navigations get empty DOMs. So we pay
+        # the cost of one session per article.
+        cap = min(len(article_urls), 20)
 
-        for i, (url, link_text) in enumerate(article_urls[:25]):
+        for i, (url, link_text) in enumerate(article_urls[:cap]):
+            browser_a = None
             try:
-                print(f"  [reuters] [{i+1}/{min(len(article_urls),25)}] {link_text[:50]}...")
-                page2.goto(url, wait_until="domcontentloaded", timeout=25000)
-                page2.wait_for_timeout(6000)
+                print(f"  [reuters] [{i+1}/{cap}] {link_text[:50]}...")
+                browser_a, page_a = connect(pw)
 
-                # Wait for article body to render, then use Playwright
-                # locator APIs which wait for elements to appear
+                page_a.goto(url, wait_until="domcontentloaded", timeout=30000)
+                page_a.wait_for_timeout(8000)
+
                 try:
-                    page2.wait_for_selector("h1", timeout=8000)
+                    page_a.wait_for_selector("h1", timeout=10000)
                 except Exception:
                     pass
 
                 title = ""
                 try:
-                    title = page2.inner_text("h1", timeout=3000)
+                    title = page_a.inner_text("h1", timeout=5000)
                 except Exception:
                     title = link_text
 
                 date = ""
                 try:
-                    date = page2.get_attribute("time", "datetime", timeout=2000) or ""
+                    date = page_a.get_attribute("time", "datetime", timeout=3000) or ""
                 except Exception:
                     pass
 
-                # Extract article body — try Playwright's inner_text on
-                # known article containers, falling back to full body
                 text = ""
                 for selector in [
                     "article",
@@ -171,8 +172,7 @@ def scrape() -> list[str]:
                     "main",
                 ]:
                     try:
-                        raw = page2.inner_text(selector, timeout=3000)
-                        # Filter to substantial lines
+                        raw = page_a.inner_text(selector, timeout=5000)
                         lines = [
                             l.strip() for l in raw.split("\n")
                             if len(l.strip()) > 60
@@ -194,10 +194,15 @@ def scrape() -> list[str]:
                 saved.append(path)
                 print(f"  [reuters]   saved!")
 
+            except RuntimeError as e:
+                # Quota exhausted — stop trying
+                print(f"  [reuters]   {e}")
+                break
             except Exception as e:
                 print(f"  [reuters]   error: {e}")
-
-        browser2.close()
+            finally:
+                if browser_a:
+                    browser_a.close()
 
     return saved
 

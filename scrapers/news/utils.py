@@ -25,14 +25,14 @@ def save_article(scraper_name: str, title: str, text: str,
     filename = f"{scraper_name}_{slug}.txt"
     filepath = os.path.join(DATA_DIR, filename)
 
-    header = f"Source: {scraper_name}\n"
+    header = f"{title}\n"
+    header += f"Source: {scraper_name}\n"
     if author:
         header += f"Author: {author}\n"
     if date:
         header += f"Date: {date}\n"
     if url:
         header += f"URL: {url}\n"
-    header += f"Title: {title}\n"
     header += "=" * 72 + "\n\n"
 
     with open(filepath, "w", encoding="utf-8") as f:
