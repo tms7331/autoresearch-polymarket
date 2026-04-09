@@ -1,0 +1,14 @@
+[project]
+name = "autoresearch"
+version = "0.1.0"
+description = "Autoresearch: news + polymarket scrapers and prediction experiments"
+requires-python = ">=3.10"
+dependencies = [
+    "beautifulsoup4>=4.12.0",
+    "feedparser>=6.0.0",
+    "lxml>=5.0.0",
+    "numpy>=2.2.6",
+    "playwright>=1.40.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.32.0",
+]
