@@ -20,7 +20,9 @@ autoresearch/
 │
 ├── data/
 │   ├── articles/           # Scraped news articles (plain text)
-│   └── markets/            # Polymarket market definitions + resolution criteria
+│   ├── markets_train/      # Polymarket markets for training (no odds)
+│   ├── markets_test/       # Polymarket markets for evaluation (with odds)
+│   └── markets_validation/ # 10% held-out markets for final evaluation (full info)
 │
 └── reports/                # Analysis outputs and tracked results
 ```
@@ -29,7 +31,7 @@ autoresearch/
 
 **News** (`scrapers/news/`): Pulls articles from multiple sources -- GDELT, GNews, The Guardian, MediaStack, NewsAPI, Reuters, RSS feeds, and Wikipedia current events. Run all with `run_all.py`.
 
-**Polymarket** (`scrapers/polymarket/`): Fetches geopolitics prediction markets from Polymarket, including odds, volume, resolution criteria, and end dates.
+**Polymarket** (`scrapers/polymarket/`): Fetches geopolitics prediction markets from Polymarket, including odds, volume, resolution criteria, and end dates. Markets are split into three sets: train (no odds), test (with odds), and validation (10% random held-out with full info, excluded from train/test).
 
 ## Experiments
 
