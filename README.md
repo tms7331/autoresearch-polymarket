@@ -36,6 +36,8 @@ Over time, the memory bank learns to surface the facts that actually matter for 
 
 The q_blend parameter (currently 0.1) controls how much Q-values influence retrieval vs. pure similarity. This is intentionally low early on -- as Q-values accumulate more updates, the blend can be increased to rely more heavily on learned utility.
 
+View results: [Experiment Dashboard](https://htmlpreview.github.io/?https://github.com/tms7331/autoresearch-polymarket/blob/main/experiments/memory/dashboard.html) | [Model Inspector](https://htmlpreview.github.io/?https://github.com/tms7331/autoresearch-polymarket/blob/main/experiments/memory/inspector.html)
+
 ## The PGM Approach
 
 The second experiment builds a **Probabilistic Graphical Model** (Bayesian Network) that maps news events to market outcomes. Where the memory system gives an LLM agent better information to reason with, the PGM approach tries to encode the reasoning itself as structure:
@@ -43,6 +45,8 @@ The second experiment builds a **Probabilistic Graphical Model** (Bayesian Netwo
 - **Semantic event nodes** are created by clustering article passages using sentence-transformer embeddings (all-MiniLM-L6-v2) and sqlite-vec. Each node represents a canonical concept (e.g., "NATO expansion", "Iran nuclear negotiations").
 - **Market nodes** are connected to relevant event nodes by cosine similarity. Each market has a Conditional Probability Distribution (CPD) learned from training data: `P(market_outcome | parent_event_states)`.
 - **Inference** uses Variable Elimination over the Bayesian network. Given observed events from current news, the model computes posterior probabilities for each market. Post-hoc calibration adjusts for systematic bias.
+
+View results: [Experiment Dashboard](https://htmlpreview.github.io/?https://github.com/tms7331/autoresearch-polymarket/blob/main/experiments/pgm/dashboard.html) | [Model Inspector](https://htmlpreview.github.io/?https://github.com/tms7331/autoresearch-polymarket/blob/main/experiments/pgm/inspector.html)
 
 Both experiments serve the same broader goal: building agents that use prediction markets as a ground-truth calibration signal. Polymarket provides consensus probabilities from real money on the line -- a far better training signal than expert surveys or historical base rates. The PGM encodes this calibration structurally, while the memory system learns it through reinforcement.
 
