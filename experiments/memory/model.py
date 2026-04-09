@@ -445,4 +445,4 @@ class SqliteVecMemoryModel(MemoryModel):
 
 
 def create_model() -> MemoryModel:
-    return SqliteVecMemoryModel(embedding_dim=2048, k1=30, k2=8, q_blend=0.1)
+    return SqliteVecMemoryModel(embedding_dim=2048, k1=30, k2=8, q_blend=0.05)

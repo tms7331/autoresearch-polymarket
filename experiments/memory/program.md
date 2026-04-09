@@ -196,15 +196,19 @@ Number experiments sequentially starting from 1. If the run crashed, record the 
 ## Current Baseline
 
 ```
-brier_score:      0.133307
-calibration_err:  0.161300
+brier_score:      0.051939
+calibration_err:  0.137500
 coverage:         1.0000
-num_memories:     3350
+num_memories:     4275
 embedding_dim:    2048
+q_blend:          0.05
 ```
 
-Known problems in the baseline:
-- Article metadata leaks into memories (author bylines, URLs, navigation text)
+Key finding: reducing q_blend from 0.1 to 0.05 gave the biggest improvement so far (0.086 → 0.052). Q-values were over-weighted, letting noisy bootstrap scores pollute retrieval.
+
+Known problems remaining:
+- Article metadata leaks into memories (author bylines, URLs, navigation text) — but filtering attempts have all regressed, possibly because filtering changes memory count which disrupts Q-value bootstrap
 - Q-value bootstrap rewards all retrieved memories equally (inflates junk)
 - TF-IDF misses queries with no vocab overlap (returns empty)
 - No entity extraction — retrieval quality is mediocre for specific named entities
+- Calibration (0.138) still has room for improvement — k2=5 showed 0.084 calibration but worse brier
