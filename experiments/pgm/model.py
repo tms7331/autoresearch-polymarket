@@ -39,7 +39,7 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # 384-dim, fast, well-tested
 EMBEDDING_DIM = 384
 SIMILARITY_THRESHOLD = 0.55   # cosine sim to merge into existing event node
 EVIDENCE_SIM_THRESHOLD = 0.40 # min cosine sim for event → market edge
-MAX_PARENTS_PER_MARKET = 3    # max event-node parents per market (keeps CPD small: 2^3=8)
+MAX_PARENTS_PER_MARKET = 5    # max event-node parents per market (2^5=32 CPD entries)
 MAX_CHUNKS_PER_ARTICLE = 3    # sentences to extract per article
 MAX_TOTAL_CHUNKS = 5000       # cap to stay within time budget
 
@@ -131,6 +131,7 @@ class SemanticEventGraph(PredictionModel):
 
         # Calibration + kNN
         self._cal_bins: list[tuple[float, float]] = []
+        self._post_blend_cal_bins: list[tuple[float, float]] = []
         self._market_emb_list: list[tuple[np.ndarray, float]] = []
         self._market_embeddings: dict[str, np.ndarray] = {}
         self._market_prices: dict[str, float] = {}
@@ -157,7 +158,7 @@ class SemanticEventGraph(PredictionModel):
 
         # 4. Embed markets and find parent event nodes
         print("  Linking markets to event nodes...")
-        market_texts = [f"{m.question} {m.description[:500]}" for m in dataset.markets]
+        market_texts = [f"{m.question} {m.description[:200]}" for m in dataset.markets]
         market_embs = (
             self.embedder.encode(market_texts, show_progress_bar=False,
                                  normalize_embeddings=True)
@@ -184,9 +185,13 @@ class SemanticEventGraph(PredictionModel):
         print("  Building Bayesian network...")
         self._build_pgmpy_bn()
 
-        # 6. Calibration
+        # 6. Calibration (on raw BN predictions)
         print("  Learning calibration...")
         self._learn_calibration(dataset.markets)
+
+        # 7. Second calibration pass (on blended BN+kNN predictions)
+        print("  Learning post-blend calibration...")
+        self._learn_post_blend_calibration(dataset.markets)
 
     def _init_vec_db(self):
         self.db = sqlite3.connect(":memory:")
@@ -393,7 +398,7 @@ class SemanticEventGraph(PredictionModel):
             pairs.append((raw, m.market_price))
         pairs.sort(key=lambda x: x[0])
 
-        n_bins = 30
+        n_bins = 40
         self._cal_bins = []
         bin_size = max(1, len(pairs) // n_bins)
         for i in range(0, len(pairs), bin_size):
@@ -419,6 +424,41 @@ class SemanticEventGraph(PredictionModel):
                 return a0 + t * (a1 - a0)
         return raw_pred
 
+    def _learn_post_blend_calibration(self, markets: list[Market]):
+        """Learn a second calibration layer on the blended (BN+kNN) predictions."""
+        pairs = []
+        for m in markets:
+            blended = self._predict_blended(m)
+            pairs.append((blended, m.market_price))
+        pairs.sort(key=lambda x: x[0])
+
+        n_bins = 40
+        self._post_blend_cal_bins: list[tuple[float, float]] = []
+        bin_size = max(1, len(pairs) // n_bins)
+        for i in range(0, len(pairs), bin_size):
+            chunk = pairs[i:i + bin_size]
+            mean_pred = sum(p for p, _ in chunk) / len(chunk)
+            mean_actual = sum(a for _, a in chunk) / len(chunk)
+            self._post_blend_cal_bins.append((mean_pred, mean_actual))
+
+    def _calibrate_post_blend(self, pred: float) -> float:
+        bins = self._post_blend_cal_bins
+        if not bins:
+            return pred
+        if pred <= bins[0][0]:
+            return bins[0][1]
+        if pred >= bins[-1][0]:
+            return bins[-1][1]
+        for i in range(len(bins) - 1):
+            p0, a0 = bins[i]
+            p1, a1 = bins[i + 1]
+            if p0 <= pred <= p1:
+                if p1 == p0:
+                    return a0
+                t = (pred - p0) / (p1 - p0)
+                return a0 + t * (a1 - a0)
+        return pred
+
     # ------------------------------------------------------------------
     # Predict
     # ------------------------------------------------------------------
@@ -434,7 +474,8 @@ class SemanticEventGraph(PredictionModel):
         combo = (1 << len(parents)) - 1
         return cpd.get(combo, self.base_rate)
 
-    def predict(self, market: Market) -> float:
+    def _predict_blended(self, market: Market) -> float:
+        """BN prediction + calibration + kNN blend (before post-blend calibration)."""
         raw = self._predict_raw(market)
         calibrated = self._calibrate(raw)
 
@@ -452,6 +493,10 @@ class SemanticEventGraph(PredictionModel):
                 return 0.7 * calibrated + 0.3 * knn_price
 
         return calibrated
+
+    def predict(self, market: Market) -> float:
+        blended = self._predict_blended(market)
+        return self._calibrate_post_blend(blended)
 
     # ------------------------------------------------------------------
     # Tool interface
