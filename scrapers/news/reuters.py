@@ -16,7 +16,7 @@ import requests as http_requests
 from dotenv import load_dotenv
 from utils import save_article
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 BROWSERBASE_API_KEY = os.getenv("BROWSERBASE_API_KEY", "")
 BROWSERBASE_PROJECT_ID = os.getenv("BROWSERBASE_PROJECT_ID", "")
