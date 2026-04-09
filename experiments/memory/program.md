@@ -138,8 +138,7 @@ Each memory should be: **concrete** (specific events/data), **factual** (from ar
    - `experiments/memory/run.py` — the runner (understand fast vs full mode)
 2. **Verify data exists**: `data/articles/`, `data/markets_train/`, `data/markets_test/`, `data/markets_validation/` should all have files.
 3. **Verify Claude Code subscription**: The agent uses claude-agent-sdk which runs on the Claude Code subscription.
-4. **Create branch**: `git checkout -b arpm-memory/<tag>` from current branch.
-5. **Confirm and go**.
+4. **Confirm and go**.
 
 ## The Experiment Loop
 
@@ -147,15 +146,15 @@ LOOP FOREVER:
 
 1. **Read model.py** to understand current state.
 2. **Identify one thing to improve** — pick from the known issues or ideas above.
-3. **Make the change** in model.py. Keep changes focused — one idea per iteration.
-4. **Commit**: `git add experiments/memory/model.py && git commit -m "description of change"`
+3. **Save a backup**: `cp experiments/memory/model.py experiments/memory/model.py.bak`
+4. **Make the change** in model.py. Keep changes focused — one idea per iteration.
 5. **Run**: `cd experiments/memory && uv run run.py > run.log 2>&1`
 6. **Check results**: `grep "^brier_score:\|^coverage:" run.log`
    - If empty, it crashed — run `tail -n 50 run.log` and fix.
-7. **Log to results.tsv** (tab-separated: commit, brier_score, coverage, status, description)
+7. **Log results** to `experiments/memory/experiments.md` (see Logging Results below). Always append — never delete or rewrite previous entries.
 8. **Keep or discard**:
-   - If brier_score improved → keep the commit
-   - If equal or worse → `git reset --hard HEAD~1`
+   - If brier_score improved → keep the change, delete the backup: `rm experiments/memory/model.py.bak`
+   - If equal or worse → restore: `cp experiments/memory/model.py.bak experiments/memory/model.py && rm experiments/memory/model.py.bak`
 9. **Inspect quality** (periodically): Run `uv run inspect_model.py` and examine:
    - Are the top Q-value memories actually useful facts, or garbage?
    - Do the retrieval samples return relevant content for the market questions?
@@ -171,17 +170,28 @@ LOOP FOREVER:
 
 ## Logging Results
 
-Tab-separated `results.tsv`:
+### experiments.md
 
-```
-commit	brier_score	coverage	status	description
+After every experiment run, append the results to `experiments/memory/experiments.md`. This is the canonical log of all experiments and their outcomes. Format each entry as follows:
+
+```markdown
+## Experiment N — <short title>
+
+**Status:** keep | discard | crash
+**Description:** <1-2 sentence summary of what was tried and why>
+
+| Metric | Value |
+|---|---|
+| brier_score | 0.XXXXXX |
+| calibration_err | 0.XXXXXX |
+| coverage | X.XXXX |
+| num_memories | N |
+| total_seconds | N.N |
+
+**Notes:** <any observations — what improved, what regressed, hypotheses for next run>
 ```
 
-- commit: 7-char git hash
-- brier_score: e.g. 0.1333 (use 0.000000 for crashes)
-- coverage: fraction of markets predicted (use 0.0 for crashes)
-- status: `keep`, `discard`, or `crash`
-- description: what this iteration tried
+Number experiments sequentially starting from 1. If the run crashed, record the error message in the Notes field. Always append — never delete or rewrite previous entries.
 
 ## Current Baseline
 
