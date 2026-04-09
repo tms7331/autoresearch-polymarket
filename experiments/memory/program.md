@@ -1,185 +1,200 @@
 # arpm-memory — Auto Research Prediction Memory
 
-This is an experiment to have the LLM autonomously build and refine a **MemRL-inspired memory system** that learns to predict real-world events by ingesting news and using prediction market (Polymarket) resolutions as ground truth signal.
+An LLM agent predicts real-world events using a **memory_lookup** tool backed by a sqlite-vec memory bank. The memory bank is built from news articles — each memory is a concrete fact (an event, quote, data point). The experiment loop tunes `model.py` to improve what the memory tool returns, which improves the agent's predictions.
 
-The core idea: instead of building a static model, we build a **self-evolving memory bank** where each memory is a (intent, experience, utility) triplet. The system learns which memories are actually useful for prediction through reinforcement learning on market outcomes.
+Each run **wipes and rebuilds the memory bank from scratch** with the current parameters. There is no persistent state between runs — the entire memory system is reconstructed from articles + configuration each time.
 
-## Key Concepts (from MemRL)
+## How It Works
 
-- **Memory Triplets**: Each memory is `(z, e, Q)` where:
-  - `z` (intent) = embedding of the question/market being predicted
-  - `e` (experience) = the analysis, reasoning, and news context that produced a prediction
-  - `Q` (utility) = learned score reflecting whether this memory leads to correct predictions
-- **Two-Phase Retrieval**: Phase A retrieves by semantic similarity; Phase B re-ranks by blending similarity with Q-value
-- **Q-Value Learning**: `Q_new = Q_old + alpha * (reward - Q_old)` where reward comes from Polymarket resolution
-- **Store successes AND failures**: Failed predictions with good failure reflections are high-utility near-misses
+```
+Articles (data/articles/)
+    ↓ _split_into_facts()          ← you tune this
+    ↓ TF-IDF embedding             ← you tune this
+    ↓ sqlite-vec INSERT
+    ↓ Q-value bootstrap            ← you tune this
+    = Memory bank (in-memory SQLite)
+    ↓
+Agent asks: "Will Iran test a nuclear weapon?"
+    ↓ tool_lookup()                ← you tune this
+    ↓ KNN retrieval + re-ranking
+    ↓ returns relevant facts to agent
+    ↓
+Agent reasons over facts → {"probability": 0.08}
+    ↓
+Evaluate prediction vs Polymarket odds → Brier score
+```
 
-## Overview
+## File Roles
 
-The system has three phases that form a loop:
+| File | Role | Modifiable? |
+|---|---|---|
+| `experiments/memory/model.py` | Memory system: fact extraction, storage, retrieval, Q-values | **YES — only file you edit** |
+| `experiments/memory/agent.py` | Claude agent harness with memory_lookup tool | No |
+| `experiments/memory/run.py` | Experiment runner: build → predict → evaluate | No |
+| `experiments/memory/prepare.py` | Data loading, evaluation metrics | No |
+| `experiments/memory/inspect_model.py` | Generates inspector.html for debugging | No |
+| `experiments/memory/gen_dashboard.py` | Generates dashboard.html from results.tsv | No |
 
-1. **Ingest** — pull recent news + active/resolved Polymarket markets.
-2. **Memory** — build/update a memory bank from news analysis, linking memories to market predictions.
-3. **Evaluate** — score predictions against resolved markets (Brier score), update Q-values.
+## What You Tune in model.py
 
-The LLM iterates on the memory system code (`model.py`) to improve prediction quality, using the same keep/discard discipline as autoresearch.
+Every run wipes the in-memory SQLite database and rebuilds it. You're tuning:
+
+### 1. Fact Extraction (`_split_into_facts()`)
+How articles become memories. This is the most important function.
+
+**Current approach**: Split article text on paragraph/sentence boundaries, filter boilerplate, prefix with date/source.
+
+**Known issues to fix**:
+- Article metadata (author bylines, URLs, "Reporting by...") leaks through as memories
+- Some chunks are too vague to be useful ("He said it was important")
+- No entity extraction — facts don't highlight who/what/where
+
+**Things to try**:
+- Stricter boilerplate filtering (author lines, URL lines, navigation text)
+- Minimum information density — require named entities, numbers, or quoted speech
+- Smarter chunking — keep related sentences together, don't split mid-thought
+- Include article title as context prefix so facts are self-contained
+
+### 2. Embedding (`TfidfVectorizer`)
+How memories and queries are converted to vectors for similarity search.
+
+**Current approach**: TF-IDF with 2048-dim vocabulary, augmented TF, L2 normalized.
+
+**Things to try**:
+- Vocabulary size (`max_features`) — bigger catches more terms but is sparser
+- IDF weighting formula
+- Term filtering thresholds (min/max document frequency)
+- Character n-grams or bigrams for better entity matching
+- Sentence-transformers for dense embeddings (already in dependencies)
+
+### 3. Retrieval (`_retrieve()`, `tool_lookup()`)
+How memories are found and ranked when the agent calls the tool.
+
+**Current approach**: Phase A = sqlite-vec KNN (top k1=30), Phase B = re-rank by 90% similarity + 10% Q-value (top k2=8).
+
+**Known issues to fix**:
+- Irrelevant memories with inflated Q-values can pollute results
+- Zero-vector queries (no vocab overlap) return nothing — agent gets no help
+
+**Things to try**:
+- k1, k2 values — more candidates vs. more filtering
+- q_blend weight — how much Q-value matters vs. pure similarity
+- Distance threshold — reject memories below a minimum similarity
+- Diversity — avoid returning 5 memories about the same sub-event
+- Enrich tool_lookup output — add category base rates, memory count, confidence signal
+
+### 4. Q-Value Bootstrap (`_train_q_values()`)
+How memories get initial utility scores before the agent runs.
+
+**Current approach**: Sample 200 train markets, retrieve memories for each, reward all retrieved memories equally based on category base rate accuracy.
+
+**Known issues to fix**:
+- Rewards all retrieved memories equally — junk memories that co-occur with useful ones get inflated Q-values
+- Only uses category base rate as prediction signal, not individual memory quality
+
+**Things to try**:
+- Weight reward by similarity (closer memories get more credit)
+- Only reward top-1 or top-3 most similar, not all retrieved
+- Multiple bootstrap passes
+- Per-memory reward based on whether the memory's specific content is predictive
+- Temporal decay — older memories get less initial Q-value
+
+### 5. Factory Parameters (`create_model()`)
+The constructor arguments: `embedding_dim`, `k1`, `k2`, `q_blend`.
+
+## What Memories Should Be
+
+**Memories must be concrete facts from news articles, NOT market questions.**
+
+**BAD** (do not produce these):
+- "Will the Fed raise interest rates in June?" — a question, not a memory
+- "Author: Luke Harding Date: 2026-04-08" — metadata, not content
+- "He said it was important" — vague fragment with no standalone meaning
+- "Follow us on Twitter @BBCAfrica" — boilerplate
+
+**GOOD** (this is what we want):
+- "Defense Secretary Pete Hegseth said preventing Iran from obtaining a nuclear weapon is non-negotiable, adding Tehran must agree to full disarmament."
+- "The Federal Reserve held interest rates steady at its May meeting. Inflation remains above the 2% target at 2.8%."
+- "Russia evacuated 198 more staff from Iran's Bushehr Nuclear Power Plant as an airstrike killed an Iranian security guard."
+- "The Academy Award-winning US actor won his third Oscar on Sunday, but skipped the ceremony to visit Ukraine."
+
+Each memory should be: **concrete** (specific events/data), **factual** (from article content), **informative** (carries predictive signal), **standalone** (makes sense without seeing the original article).
+
+## Data Access Rules
+
+| Source | Path | Usage | Contents |
+|---|---|---|---|
+| Articles | `data/articles/` | Freely use | News articles (plain text) — **source of all memories** |
+| Train markets | `data/markets_train/` | Freely use | Market questions, metadata — no odds |
+| Test markets | `data/markets_test/` | Selectively use | Same markets with odds — for Q-value calibration |
+| Validation markets | `data/markets_validation/` | **NEVER use in training** | Held-out markets — evaluation only |
 
 ## Setup
 
-To set up a new experiment, work with the user to:
+1. **Read the in-scope files**:
+   - `experiments/memory/program.md` — this file
+   - `experiments/memory/model.py` — the file you modify
+   - `experiments/memory/agent.py` — the fixed agent harness (understand what it expects from `tool_lookup()`)
+   - `experiments/memory/run.py` — the runner (understand fast vs full mode)
+2. **Verify data exists**: `data/articles/`, `data/markets_train/`, `data/markets_test/`, `data/markets_validation/` should all have files.
+3. **Verify Claude Code subscription**: The agent uses claude-agent-sdk which runs on the Claude Code subscription.
+4. **Create branch**: `git checkout -b arpm-memory/<tag>` from current branch.
+5. **Confirm and go**.
 
-1. **Agree on a run tag**: propose a tag based on today's date (e.g. `apr9`). The branch `arpm-memory/<tag>` must not already exist.
-2. **Create the branch**: `git checkout -b arpm-memory/<tag>` from current master.
-3. **Read the in-scope files**: Read these files for full context:
-   - `arpm-memory/program.md` — this file. The rules of engagement.
-   - `arpm-memory/prepare.py` — news ingestion, Polymarket data, memory infrastructure, evaluation. Do not modify.
-   - `arpm-memory/model.py` — the file you modify. Memory system construction, retrieval, Q-value updates, prediction.
-4. **Verify data exists**: Check that `~/.cache/arpm-memory/` contains data. If not, tell the human to run `cd arpm-memory && uv run prepare.py`.
-5. **Initialize results.tsv**: Create `results.tsv` with just the header row.
-6. **Confirm and go**: Confirm setup looks good.
+## The Experiment Loop
 
-Once you get confirmation, kick off the experimentation.
+LOOP FOREVER:
 
-## Architecture
+1. **Read model.py** to understand current state.
+2. **Identify one thing to improve** — pick from the known issues or ideas above.
+3. **Make the change** in model.py. Keep changes focused — one idea per iteration.
+4. **Commit**: `git add experiments/memory/model.py && git commit -m "description of change"`
+5. **Run**: `cd experiments/memory && uv run run.py > run.log 2>&1`
+6. **Check results**: `grep "^brier_score:\|^coverage:" run.log`
+   - If empty, it crashed — run `tail -n 50 run.log` and fix.
+7. **Log to results.tsv** (tab-separated: commit, brier_score, coverage, status, description)
+8. **Keep or discard**:
+   - If brier_score improved → keep the commit
+   - If equal or worse → `git reset --hard HEAD~1`
+9. **Inspect quality** (periodically): Run `uv run inspect_model.py` and examine:
+   - Are the top Q-value memories actually useful facts, or garbage?
+   - Do the retrieval samples return relevant content for the market questions?
+   - Is the prediction scatter plot improving (dots closer to diagonal)?
+10. **Go to step 1.**
 
-### News Ingestion (prepare.py — fixed)
+**Fast mode** (`uv run run.py`) evaluates on 10 validation markets (~3 min).
+**Full mode** (`uv run run.py --full`) evaluates on all 75 (~20 min). Use for final benchmarks.
 
-- Fetches news articles from configured RSS feeds and caches them locally.
-- Fetches active and resolved Polymarket markets via the `polymarket` CLI.
-- Links news articles to relevant markets by keyword/topic matching.
-- Splits data by time: markets resolved before cutoff for training, active/recent for evaluation.
-- Provides a `load_dataset()` function that returns train data, val data, and market metadata.
+**Timeout**: If a run exceeds 10 minutes, kill it and treat as crash.
 
-### Polymarket Signal (prepare.py — fixed)
+**NEVER STOP**: Do NOT pause to ask the human. If you run out of ideas, run the inspector, examine what's broken, and fix it.
 
-- Active markets provide current consensus probabilities (wisdom of crowds).
-- Resolved markets provide binary ground truth (the reward signal for Q-learning).
-- Market metadata includes: question, category, volume, liquidity, outcome prices.
-- The gap between our memory-system prediction and market resolution is the Brier score we optimize.
+## Logging Results
 
-### Memory System (model.py — you modify this)
-
-- Constructs a MemRL-style memory bank from news + market data.
-- The memory system should implement:
-  - **Storage**: How to construct memory triplets from news articles and market context.
-  - **Retrieval**: Two-phase retrieval (semantic similarity + Q-value re-ranking).
-  - **Q-Value Updates**: How to update utility scores when market outcomes are observed.
-  - **Prediction**: How to combine retrieved memories into a probability estimate.
-  - **Experience Summarization**: How to distill news context into useful memory content.
-- Must implement the `MemoryPredictionModel` interface (defined in prepare.py).
-
-### Evaluation (prepare.py — fixed)
-
-- The evaluation metric is **Brier score** (lower is better): mean squared error between predicted probabilities and binary outcomes.
-- Resolved Polymarket markets provide ground truth.
-- The model predicts each market's outcome probability using only information available before resolution.
-- Secondary metrics: calibration error, log-loss, coverage, and Q-value correlation (do Q-values predict memory usefulness?).
-
-### Tool Interface
-
-The model exposes a `predict_market(question: str) -> dict` function:
-
-```python
-result = model.predict_market("Will the Fed raise interest rates at the June meeting?")
-# Returns:
-# {
-#     "probability": 0.73,
-#     "confidence": 0.6,
-#     "retrieved_memories": [           # which memories were used
-#         {"intent": "...", "q_value": 0.82, "similarity": 0.91},
-#     ],
-#     "factors": [                      # key factors from retrieved memories
-#         {"factor": "CPI above expectations", "direction": "up", "weight": 0.3},
-#         {"factor": "Fed chair hawkish comments", "direction": "up", "weight": 0.25},
-#     ],
-#     "polymarket_comparison": 0.71,    # current market price for reference
-# }
-```
-
-## Experimentation
-
-Each experiment runs locally. The script runs for a **fixed time budget of 3 minutes** (wall clock, excluding startup). Launch with: `cd arpm-memory && uv run run.py`.
-
-**What you CAN do:**
-- Modify `arpm-memory/model.py` — this is the only file you edit. Memory construction, retrieval algorithms, Q-value update rules, embedding strategies, prediction aggregation, everything about the memory system.
-
-**What you CANNOT do:**
-- Modify `arpm-memory/prepare.py`. It is read-only (news ingestion, market data, evaluation).
-- Install new packages beyond what's in `arpm-memory/pyproject.toml`.
-- Modify the evaluation harness.
-
-**The goal is simple: get the lowest Brier score** on the validation set of resolved markets. Secondary goals: improve calibration, increase coverage, achieve high Q-value-to-accuracy correlation.
-
-## Output format
-
-Once the script finishes it prints a summary:
-
-```
----
-brier_score:      0.2150
-log_loss:         0.5832
-calibration_err:  0.0412
-coverage:         0.85
-q_correlation:    0.72
-num_memories:     1500
-num_markets_eval: 50
-total_seconds:    185.3
-```
-
-Extract the key metric:
-```
-grep "^brier_score:" run.log
-```
-
-## Logging results
-
-When an experiment is done, log it to `results.tsv` (tab-separated).
-
-The TSV has a header row and 5 columns:
+Tab-separated `results.tsv`:
 
 ```
 commit	brier_score	coverage	status	description
 ```
 
-1. git commit hash (short, 7 chars)
-2. brier_score achieved (e.g. 0.2150) — use 0.000000 for crashes
-3. coverage (fraction of markets the model can price) — use 0.0 for crashes
-4. status: `keep`, `discard`, or `crash`
-5. short text description of what this experiment tried
+- commit: 7-char git hash
+- brier_score: e.g. 0.1333 (use 0.000000 for crashes)
+- coverage: fraction of markets predicted (use 0.0 for crashes)
+- status: `keep`, `discard`, or `crash`
+- description: what this iteration tried
 
-## The experiment loop
+## Current Baseline
 
-The experiment runs on a dedicated branch (e.g. `arpm-memory/apr9`).
+```
+brier_score:      0.133307
+calibration_err:  0.161300
+coverage:         1.0000
+num_memories:     3350
+embedding_dim:    2048
+```
 
-LOOP FOREVER:
-
-1. Look at the git state: the current branch/commit we're on
-2. Tune `model.py` with an experimental idea by directly hacking the code.
-3. git commit
-4. Run the experiment: `cd arpm-memory && uv run run.py > run.log 2>&1`
-5. Read out the results: `grep "^brier_score:\|^coverage:" run.log`
-6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the stack trace and attempt a fix.
-7. Record the results in the tsv (do not commit results.tsv)
-8. If brier_score improved (lower), keep the commit
-9. If brier_score is equal or worse, git reset back
-
-**Timeout**: Each experiment should take ~3 minutes. If a run exceeds 6 minutes, kill it and treat as failure.
-
-**NEVER STOP**: Once the experiment loop has begun, do NOT pause to ask the human. You are autonomous. If you run out of ideas, think harder — try different retrieval strategies, different Q-value update rules, different embedding approaches, different memory representations.
-
-## Ideas to explore
-
-These are starting points, not a roadmap. Use your judgment.
-
-- **Retrieval strategies**: Pure similarity vs. Q-weighted vs. diversity-promoting retrieval
-- **Memory construction**: What makes a good memory triplet? Raw headlines vs. summarized analysis vs. entity-focused
-- **Q-value dynamics**: Learning rate alpha, temporal decay, per-category Q-values
-- **Embedding approaches**: TF-IDF, keyword overlap, entity co-occurrence, category-aware embeddings
-- **Temporal awareness**: Recent news should weigh more; markets have time horizons
-- **Category specialization**: Separate memory banks per topic (politics, economics, tech)
-- **Experience quality**: Success summaries vs. failure reflections vs. both
-- **Prediction aggregation**: Weighted average of retrieved memory predictions vs. Bayesian combination
-- **Market features**: Use Polymarket volume, liquidity, price history as additional signals
-- **Ensemble memories**: Multiple retrieval strategies combined
-- **Memory consolidation**: Merge similar memories, prune low-Q stale memories
-- **Cross-domain transfer**: Can memories from one topic help predict another?
+Known problems in the baseline:
+- Article metadata leaks into memories (author bylines, URLs, navigation text)
+- Q-value bootstrap rewards all retrieved memories equally (inflates junk)
+- TF-IDF misses queries with no vocab overlap (returns empty)
+- No entity extraction — retrieval quality is mediocre for specific named entities
