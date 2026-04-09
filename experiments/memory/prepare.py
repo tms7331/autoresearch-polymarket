@@ -41,7 +41,9 @@ RETRIEVAL_LAMBDA = 0.5     # blend weight: 0=pure similarity, 1=pure Q-value
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ARTICLES_DIR = os.path.join(REPO_ROOT, "data", "articles")
-MARKETS_DIR = os.path.join(REPO_ROOT, "data", "markets")
+MARKETS_TRAIN_DIR = os.path.join(REPO_ROOT, "data", "markets_train")
+MARKETS_TEST_DIR = os.path.join(REPO_ROOT, "data", "markets_test")
+MARKETS_VALIDATION_DIR = os.path.join(REPO_ROOT, "data", "markets_validation")
 MEMORY_DIR = os.path.join(os.path.expanduser("~"), ".cache", "arpm-memory", "memory")
 
 # ---------------------------------------------------------------------------
@@ -286,18 +288,15 @@ def _parse_market_file(path: str) -> Optional[Market]:
         return None
 
 
-def load_markets() -> list[Market]:
-    """Load all markets from the data_polymarket/ folder.
-
-    Reads .txt and .md files with the structured market format.
-    """
+def load_markets(markets_dir: str) -> list[Market]:
+    """Load all markets from a directory."""
     markets = []
-    if not os.path.isdir(MARKETS_DIR):
-        print(f"Warning: markets directory not found: {MARKETS_DIR}")
+    if not os.path.isdir(markets_dir):
+        print(f"Warning: markets directory not found: {markets_dir}")
         return markets
 
-    for fname in sorted(os.listdir(MARKETS_DIR)):
-        path = os.path.join(MARKETS_DIR, fname)
+    for fname in sorted(os.listdir(markets_dir)):
+        path = os.path.join(markets_dir, fname)
         if not os.path.isfile(path):
             continue
         if not (fname.endswith(".txt") or fname.endswith(".md")):
@@ -306,7 +305,7 @@ def load_markets() -> list[Market]:
         if m:
             markets.append(m)
 
-    print(f"Markets: loaded {len(markets)} from {MARKETS_DIR}")
+    print(f"Markets: loaded {len(markets)} from {markets_dir}")
     return markets
 
 
@@ -441,45 +440,26 @@ class Dataset:
 
 
 def load_dataset() -> Dataset:
-    """Load articles and markets, split into train/val.
-
-    Articles are read from the local articles/ folder.
-    Markets are loaded from the polymarket cache.
-
-    Returns a Dataset with all markets and articles, linked by keyword overlap.
-    Markets that have been resolved (resolved != None) go into train/val splits.
-    Unresolved markets are listed as active (prediction targets).
-    """
+    """Load articles and markets from their respective directories."""
     articles = load_articles()
-    markets = load_markets()
+    train_markets = load_markets(MARKETS_TRAIN_DIR)
+    test_markets = load_markets(MARKETS_TEST_DIR)
+    val_markets = load_markets(MARKETS_VALIDATION_DIR)
 
-    if not markets:
-        print("No markets found. Add .txt files to data_polymarket/.")
+    if not train_markets:
+        print("No train markets found. Run scrapers first.")
 
-    # Separate resolved vs active
-    resolved = [m for m in markets if m.resolved is not None]
-    active = [m for m in markets if m.resolved is None]
+    all_markets = train_markets + test_markets + val_markets
+    article_to_market = link_articles_to_markets(articles, all_markets)
 
-    # Split resolved into train/val (if any exist)
-    if resolved:
-        n_val = max(1, int(len(resolved) * VAL_FRACTION))
-        train_markets = resolved[:-n_val] if len(resolved) > n_val else []
-        val_markets = resolved[-n_val:]
-    else:
-        train_markets = []
-        val_markets = []
-
-    # Link articles to all markets
-    article_to_market = link_articles_to_markets(articles, markets)
-
-    print(f"Dataset: {len(articles)} articles, {len(train_markets)} train markets, "
-          f"{len(val_markets)} val markets, {len(active)} active markets")
+    print(f"Dataset: {len(articles)} articles, {len(train_markets)} train, "
+          f"{len(test_markets)} test, {len(val_markets)} val markets")
 
     return Dataset(
         articles=articles,
         train_markets=train_markets,
         val_markets=val_markets,
-        active_markets=active,
+        active_markets=test_markets,
         article_to_market=article_to_market,
     )
 
@@ -502,15 +482,18 @@ def evaluate_brier(
     Returns:
         dict with brier_score, log_loss, calibration_err, coverage, and details.
     """
-    val_lookup = {m.id: m for m in val_markets if m.resolved is not None}
+    val_lookup = {
+        m.id: m for m in val_markets
+        if m.outcome_prices and m.outcome_prices.get("Yes") is not None
+    }
     pred_lookup = {mid: prob for mid, prob in predictions}
 
     matched = []
     for mid, market in val_lookup.items():
         if mid in pred_lookup:
             prob = max(0.0, min(1.0, pred_lookup[mid]))
-            outcome = 1.0 if market.resolved else 0.0
-            matched.append((prob, outcome))
+            market_odds = market.outcome_prices["Yes"]
+            matched.append((prob, market_odds))
 
     if len(matched) == 0:
         return {
@@ -572,18 +555,20 @@ def evaluate_q_correlation(
     if not memories or not predictions:
         return 0.0
 
-    val_lookup = {m.id: m for m in val_markets if m.resolved is not None}
+    val_lookup = {
+        m.id: m for m in val_markets
+        if m.outcome_prices and m.outcome_prices.get("Yes") is not None
+    }
     pred_lookup = {mid: prob for mid, prob in predictions}
 
-    # For each memory linked to a market, compare Q-value vs prediction error
     q_values = []
     errors = []
     for mem in memories:
         if mem.source_market and mem.source_market in val_lookup and mem.source_market in pred_lookup:
             market = val_lookup[mem.source_market]
             prob = pred_lookup[mem.source_market]
-            outcome = 1.0 if market.resolved else 0.0
-            error = abs(prob - outcome)
+            market_odds = market.outcome_prices["Yes"]
+            error = abs(prob - market_odds)
             accuracy = 1.0 - error
             q_values.append(mem.q_value)
             errors.append(accuracy)
@@ -607,8 +592,10 @@ def evaluate_q_correlation(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    print(f"Articles:  {ARTICLES_DIR}")
-    print(f"Markets:   {MARKETS_DIR}")
+    print(f"Articles:    {ARTICLES_DIR}")
+    print(f"Train:       {MARKETS_TRAIN_DIR}")
+    print(f"Test:        {MARKETS_TEST_DIR}")
+    print(f"Validation:  {MARKETS_VALIDATION_DIR}")
     print()
 
     dataset = load_dataset()
@@ -617,15 +604,15 @@ if __name__ == "__main__":
     print("Dataset summary:")
     print(f"  Articles:       {len(dataset.articles)}")
     print(f"  Train markets:  {len(dataset.train_markets)}")
+    print(f"  Test markets:   {len(dataset.active_markets)}")
     print(f"  Val markets:    {len(dataset.val_markets)}")
-    print(f"  Active markets: {len(dataset.active_markets)}")
     linked = sum(1 for v in dataset.article_to_market.values() if v)
     print(f"  Markets with linked articles: {linked}")
 
-    if dataset.active_markets:
+    if dataset.val_markets:
         print()
-        print("Active markets:")
-        for m in dataset.active_markets:
+        print("Validation markets (first 10):")
+        for m in dataset.val_markets[:10]:
             odds = m.outcome_prices.get("Yes", "?")
             if isinstance(odds, float):
                 odds = f"{odds:.0%}"

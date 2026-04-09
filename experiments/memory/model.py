@@ -1,17 +1,22 @@
 """
 arpm-memory Memory System — the file you modify.
 
-Implements a MemRL-inspired memory bank that learns to predict market outcomes
-by storing (intent, experience, Q-value) triplets and using two-phase retrieval.
+Implements the memory bank that backs the agent's memory_lookup tool.
+Memories are concrete facts derived from news articles — events, statements,
+data points — NOT market questions.  Backed by sqlite-vec for fast vector
+similarity search.
 
-This is the baseline implementation. Improve it.
+**This is the ONLY file the experiment loop modifies.**
 """
 
 import math
 import hashlib
 import re
+import sqlite3
 from collections import defaultdict
-from dataclasses import dataclass
+
+import numpy as np
+import sqlite_vec
 
 from prepare import (
     Article, Market, MemoryTriplet, Dataset,
@@ -20,356 +25,424 @@ from prepare import (
 )
 
 # ---------------------------------------------------------------------------
-# Memory Prediction Model Interface (must implement these)
+# TF-IDF Vectorizer
 # ---------------------------------------------------------------------------
 
-class MemoryPredictionModel:
-    """Base memory prediction model. Subclass and override."""
+class TfidfVectorizer:
+    def __init__(self, max_features: int = 2048):
+        self.max_features = max_features
+        self.vocab: dict[str, int] = {}
+        self.idf: np.ndarray | None = None
 
+    def fit(self, documents: list[list[str]]):
+        df = defaultdict(int)
+        for doc in documents:
+            for term in set(doc):
+                df[term] += 1
+        n_docs = len(documents)
+        sorted_terms = sorted(df.keys(), key=lambda t: df[t], reverse=True)
+        filtered = [
+            t for t in sorted_terms
+            if 2 <= df[t] <= int(n_docs * 0.8) + 1
+        ]
+        if len(filtered) < 50:
+            filtered = sorted_terms
+        selected = filtered[: self.max_features]
+        self.vocab = {term: i for i, term in enumerate(selected)}
+        n = len(documents)
+        self.idf = np.zeros(len(self.vocab), dtype=np.float32)
+        for term, idx in self.vocab.items():
+            self.idf[idx] = math.log((n + 1) / (df.get(term, 0) + 1)) + 1
+
+    def transform(self, tokens: list[str]) -> np.ndarray:
+        vec = np.zeros(len(self.vocab), dtype=np.float32)
+        if not tokens or not self.vocab:
+            return vec
+        tf = defaultdict(int)
+        for t in tokens:
+            tf[t] += 1
+        max_tf = max(tf.values()) if tf else 1
+        for term, count in tf.items():
+            if term in self.vocab:
+                idx = self.vocab[term]
+                vec[idx] = (0.5 + 0.5 * count / max_tf) * self.idf[idx]
+        norm = np.linalg.norm(vec)
+        if norm > 0:
+            vec /= norm
+        return vec
+
+
+def _serialize_f32(vec: np.ndarray) -> bytes:
+    return vec.astype(np.float32).tobytes()
+
+
+# ---------------------------------------------------------------------------
+# Article -> Memory extraction
+# ---------------------------------------------------------------------------
+
+BOILERPLATE = {
+    "follow us on", "sign up here", "subscribe to", "click here",
+    "additional research by", "produced by", "graphics by",
+    "reporting by", "editing by", "compiled by", "written by",
+    "bbc africa", "on facebook", "on twitter", "on instagram",
+}
+
+
+def _split_into_facts(article: Article) -> list[str]:
+    """Split an article into meaningful factual chunks."""
+    text = article.summary.strip()
+    if not text:
+        return [article.title] if article.title else []
+
+    prefix_parts = []
+    if article.published:
+        prefix_parts.append(article.published)
+    if article.source and article.source != "local":
+        prefix_parts.append(article.source)
+    prefix = f"[{', '.join(prefix_parts)}] " if prefix_parts else ""
+
+    paragraphs = re.split(r'\n\s*\n', text)
+    chunks = []
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        if len(para) <= 300:
+            chunks.append(para)
+        else:
+            sentences = re.split(r'(?<=[.!?])\s+', para)
+            group = []
+            group_len = 0
+            for sent in sentences:
+                group.append(sent)
+                group_len += len(sent)
+                if group_len >= 150 and len(group) >= 2:
+                    chunks.append(" ".join(group))
+                    group = []
+                    group_len = 0
+            if group:
+                chunks.append(" ".join(group))
+
+    facts = []
+    for chunk in chunks:
+        if len(chunk) < 40:
+            continue
+        if not re.search(r'[A-Z]', chunk):
+            continue
+        chunk_lower = chunk.lower()
+        if any(bp in chunk_lower for bp in BOILERPLATE):
+            continue
+        if len(chunk) < 60 and not re.search(r'\d', chunk):
+            continue
+        facts.append(f"{prefix}{chunk}")
+
+    if article.title:
+        facts.insert(0, f"{prefix}{article.title}")
+
+    return facts
+
+
+# ---------------------------------------------------------------------------
+# Memory Model Interface
+# ---------------------------------------------------------------------------
+
+class MemoryModel:
     def build(self, dataset: Dataset) -> list[MemoryTriplet]:
-        """Build memory bank from training data. Returns list of memories."""
         raise NotImplementedError
 
-    def predict(self, market: Market, dataset: Dataset) -> float:
-        """Predict probability that market resolves Yes. Returns float in [0, 1]."""
+    def tool_lookup(self, query: str) -> dict:
         raise NotImplementedError
 
-    def predict_batch(self, markets: list[Market], dataset: Dataset) -> list[tuple[str, float]]:
-        """Predict probabilities for a batch of markets."""
-        return [(m.id, self.predict(m, dataset)) for m in markets]
+    def start_prediction(self, market_id: str):
+        pass
 
-    def update_q_values(self, market: Market, reward: float):
-        """Update Q-values for memories that were used to predict this market."""
-        raise NotImplementedError
-
-    def predict_market(self, question: str, dataset: Dataset) -> dict:
-        """Tool interface: predict a free-text market question."""
+    def update_q_values(self, market_id: str, reward: float):
         raise NotImplementedError
 
     def get_memories(self) -> list[MemoryTriplet]:
-        """Return the current memory bank."""
         return []
 
     def stats(self) -> dict:
-        """Return model statistics."""
         return {}
 
 
 # ---------------------------------------------------------------------------
-# Baseline: Category Base Rate + Keyword Similarity + Q-Value Retrieval
+# sqlite-vec backed implementation — article-derived memories
 # ---------------------------------------------------------------------------
 
-class BaselineMemoryModel(MemoryPredictionModel):
-    """Baseline MemRL-style memory system.
+class SqliteVecMemoryModel(MemoryModel):
+    """Memory bank where each memory is a concrete fact from a news article."""
 
-    Memory construction: One memory per training market, built from
-    linked article headlines + category + outcome.
+    def __init__(self, embedding_dim: int = 2048, k1: int = 30, k2: int = 8,
+                 q_blend: float = 0.1):
+        self.embedding_dim = embedding_dim
+        self.k1 = k1
+        self.k2 = k2
+        self.q_blend = q_blend
 
-    Retrieval: Two-phase:
-      Phase A — keyword overlap similarity (top-k1 candidates)
-      Phase B — re-rank by blending similarity score with Q-value
-
-    Q-value update: EMA rule from MemRL paper.
-
-    Prediction: Weighted average of retrieved memory predictions,
-    blended with category base rate.
-    """
-
-    def __init__(self):
-        self.memories: list[MemoryTriplet] = []
-        self.memory_by_id: dict[str, MemoryTriplet] = {}
+        self.vectorizer = TfidfVectorizer(max_features=embedding_dim)
         self.category_rates: dict[str, float] = {}
         self.global_base_rate: float = 0.5
-        # Track which memories were used for each prediction (for Q-updates)
-        self._last_retrieved: dict[str, list[str]] = {}  # market_id -> [memory_ids]
+
+        self._current_market_id: str | None = None
+        self._retrieved_for_market: dict[str, set[str]] = {}
+
+        self.db = sqlite3.connect(":memory:")
+        self.db.enable_load_extension(True)
+        sqlite_vec.load(self.db)
+        self.db.enable_load_extension(False)
+        self._init_tables()
+
+    def _init_tables(self):
+        cur = self.db.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS memories (
+                id            TEXT PRIMARY KEY,
+                fact          TEXT,
+                category      TEXT,
+                source_title  TEXT,
+                source_date   TEXT,
+                source_url    TEXT,
+                q_value       REAL DEFAULT 0.0,
+                q_updates     INTEGER DEFAULT 0
+            )
+        """)
+        cur.execute(f"""
+            CREATE VIRTUAL TABLE IF NOT EXISTS memory_vec USING vec0(
+                id        TEXT PRIMARY KEY,
+                embedding float[{self.embedding_dim}]
+            )
+        """)
+        self.db.commit()
 
     def build(self, dataset: Dataset) -> list[MemoryTriplet]:
-        """Build memory bank from resolved training markets."""
+        # 1. Extract facts from all articles
+        all_facts: list[tuple[str, Article]] = []
+        for article in dataset.articles:
+            for fact in _split_into_facts(article):
+                all_facts.append((fact, article))
+        print(f"  Extracted {len(all_facts)} facts from {len(dataset.articles)} articles")
 
-        # Compute category base rates
-        cat_counts = defaultdict(lambda: [0, 0])  # [total, resolved_yes]
-        for market in dataset.train_markets:
-            cat = categorize_text(market.question)
-            cat_counts[cat][0] += 1
-            if market.resolved:
-                cat_counts[cat][1] += 1
+        # 2. Fit TF-IDF
+        corpus_tokens = []
+        for fact, _ in all_facts:
+            corpus_tokens.append(extract_keywords(fact))
+        for m in dataset.train_markets:
+            corpus_tokens.append(extract_keywords(f"{m.question} {m.description}"))
+        self.vectorizer.fit(corpus_tokens)
 
-        for cat, (total, yes) in cat_counts.items():
-            self.category_rates[cat] = yes / total if total > 0 else 0.5
+        # 3. Category base rates from test market odds
+        cat_odds: dict[str, list[float]] = defaultdict(list)
+        for market in dataset.active_markets:
+            if market.outcome_prices and market.outcome_prices.get("Yes") is not None:
+                cat = categorize_text(market.question)
+                cat_odds[cat].append(market.outcome_prices["Yes"])
+        for cat, odds_list in cat_odds.items():
+            self.category_rates[cat] = sum(odds_list) / len(odds_list)
+        all_odds = [o for odds_list in cat_odds.values() for o in odds_list]
+        self.global_base_rate = sum(all_odds) / len(all_odds) if all_odds else 0.5
 
-        total = len(dataset.train_markets)
-        total_yes = sum(1 for m in dataset.train_markets if m.resolved)
-        self.global_base_rate = total_yes / total if total > 0 else 0.5
+        # 4. Insert facts as memories
+        triplets: list[MemoryTriplet] = []
+        cur = self.db.cursor()
+        seen_ids = set()
 
-        # Create one memory per training market
-        for market in dataset.train_markets:
-            # Gather linked article context
-            linked_ids = dataset.article_to_market.get(market.id, [])
-            article_context = []
-            for aid in linked_ids[:10]:  # cap at 10 articles
-                art = dataset.article_by_id.get(aid)
-                if art:
-                    article_context.append(f"- {art.title}")
+        for fact, article in all_facts:
+            mem_id = hashlib.sha256(fact.encode()).hexdigest()[:16]
+            if mem_id in seen_ids:
+                continue
+            seen_ids.add(mem_id)
 
-            # Build experience text
-            outcome = "Yes" if market.resolved else "No"
-            experience_parts = [
-                f"Market: {market.question}",
-                f"Category: {categorize_text(market.question)}",
-                f"Outcome: {outcome}",
-                f"Volume: ${market.volume:,.0f}" if market.volume else "",
-            ]
-            if article_context:
-                experience_parts.append("Related news:")
-                experience_parts.extend(article_context[:5])
+            category = categorize_text(fact)
+            tokens = extract_keywords(fact)
+            embedding = self.vectorizer.transform(tokens)
 
-            experience = "\n".join(p for p in experience_parts if p)
-
-            # Create memory triplet
-            mem_id = hashlib.sha256(f"market:{market.id}".encode()).hexdigest()[:16]
-            memory = MemoryTriplet(
-                id=mem_id,
-                intent=market.question,
-                intent_keywords=extract_keywords(market.question),
-                experience=experience,
-                experience_type="success" if market.resolved else "failure",
-                category=categorize_text(market.question),
-                source_articles=linked_ids[:10],
-                source_market=market.id,
-                q_value=0.0,
-                q_updates=0,
-                created_at=market.resolution_date or "",
-                prediction_at_creation=1.0 if market.resolved else 0.0,
+            cur.execute(
+                "INSERT OR IGNORE INTO memories VALUES (?,?,?,?,?,?,?,?)",
+                (mem_id, fact, category, article.title,
+                 article.published or "", article.url or "", 0.0, 0),
             )
-            self.memories.append(memory)
-            self.memory_by_id[memory.id] = memory
+            cur.execute(
+                "INSERT INTO memory_vec (id, embedding) VALUES (?, ?)",
+                (mem_id, _serialize_f32(embedding)),
+            )
+            triplets.append(MemoryTriplet(
+                id=mem_id, intent=fact, intent_keywords=tokens,
+                experience=fact, experience_type="observation",
+                category=category, source_articles=[article.id],
+                source_market=None, q_value=0.0, q_updates=0,
+                created_at=article.published or "",
+                prediction_at_creation=None,
+            ))
 
-        # Run Q-learning on training data: simulate predictions and update Q-values
+        self.db.commit()
+
+        # 5. Bootstrap Q-values
         self._train_q_values(dataset)
-
-        return self.memories
+        return triplets
 
     def _train_q_values(self, dataset: Dataset):
-        """Simulate predictions on training markets to bootstrap Q-values."""
-        for market in dataset.train_markets:
-            # Retrieve memories (excluding the market's own memory)
-            own_mem_id = hashlib.sha256(f"market:{market.id}".encode()).hexdigest()[:16]
-            retrieved = self._retrieve(
-                market.question,
-                k1=10, k2=5,
-                exclude_ids={own_mem_id},
-            )
+        test_odds = {}
+        for m in dataset.active_markets:
+            if m.outcome_prices and m.outcome_prices.get("Yes") is not None:
+                test_odds[m.id] = m.outcome_prices["Yes"]
 
+        import random
+        rng = random.Random(42)
+        sample = rng.sample(dataset.train_markets, min(200, len(dataset.train_markets)))
+
+        for market in sample:
+            if market.id not in test_odds:
+                continue
+            target = test_odds[market.id]
+            retrieved = self._retrieve(market.question)
             if not retrieved:
                 continue
+            cat = categorize_text(market.question)
+            base = self.category_rates.get(cat, self.global_base_rate)
+            reward = 1.0 - (base - target) ** 2
 
-            # The reward is based on whether retrieved memories would help predict correctly
-            outcome = 1.0 if market.resolved else 0.0
-            # Simple prediction from retrieved memories
-            pred = self._aggregate_predictions(retrieved, market)
-            # Reward = 1 - Brier score for this prediction
-            error = (pred - outcome) ** 2
-            reward = 1.0 - error
+            cur = self.db.cursor()
+            for mem_id, _dist, q in retrieved:
+                new_q = q + Q_LEARNING_RATE * (reward - q)
+                cur.execute(
+                    "UPDATE memories SET q_value = ?, q_updates = q_updates + 1 WHERE id = ?",
+                    (new_q, mem_id),
+                )
+        self.db.commit()
 
-            # Update Q-values for retrieved memories
-            for mem_id, _sim, _q in retrieved:
-                mem = self.memory_by_id.get(mem_id)
-                if mem:
-                    mem.q_value = mem.q_value + Q_LEARNING_RATE * (reward - mem.q_value)
-                    mem.q_updates += 1
-
-    def _keyword_similarity(self, keywords_a: list[str], keywords_b: list[str]) -> float:
-        """Compute keyword overlap similarity (Jaccard-like)."""
-        if not keywords_a or not keywords_b:
-            return 0.0
-        set_a = set(keywords_a)
-        set_b = set(keywords_b)
-        intersection = len(set_a & set_b)
-        union = len(set_a | set_b)
-        return intersection / union if union > 0 else 0.0
-
-    def _retrieve(
-        self,
-        query: str,
-        k1: int = 10,
-        k2: int = 5,
-        exclude_ids: set = None,
-    ) -> list[tuple[str, float, float]]:
-        """Two-phase retrieval from MemRL paper.
-
-        Phase A: Top-k1 by keyword similarity, with sparsity threshold.
-        Phase B: Re-rank by composite score = (1-lambda)*sim + lambda*Q.
-
-        Returns: list of (memory_id, similarity, q_value) tuples.
-        """
-        if not self.memories:
+    def _retrieve(self, query: str, exclude_ids: set | None = None,
+                  ) -> list[tuple[str, float, float]]:
+        exclude_ids = exclude_ids or set()
+        tokens = extract_keywords(query)
+        query_vec = self.vectorizer.transform(tokens)
+        if np.linalg.norm(query_vec) < 1e-8:
             return []
 
-        exclude_ids = exclude_ids or set()
-        query_keywords = extract_keywords(query)
+        cur = self.db.cursor()
+        fetch_k = self.k1 + len(exclude_ids) + 5
+        rows = cur.execute(
+            """
+            SELECT v.id, v.distance, m.q_value
+            FROM memory_vec v
+            JOIN memories m ON m.id = v.id
+            WHERE v.embedding MATCH ? AND k = ?
+            ORDER BY v.distance
+            """,
+            (_serialize_f32(query_vec), fetch_k),
+        ).fetchall()
 
-        # Phase A: similarity-based recall
-        candidates = []
-        for mem in self.memories:
-            if mem.id in exclude_ids:
-                continue
-            sim = self._keyword_similarity(query_keywords, mem.intent_keywords)
-            if sim > 0.0:  # sparsity threshold: must have at least some overlap
-                candidates.append((mem.id, sim, mem.q_value))
-
+        candidates = [
+            (r[0], r[1], r[2]) for r in rows if r[0] not in exclude_ids
+        ][: self.k1]
         if not candidates:
             return []
 
-        # Sort by similarity, take top-k1
-        candidates.sort(key=lambda x: -x[1])
-        candidates = candidates[:k1]
-
-        # Phase B: re-rank by composite score
-        # z-score normalization
-        sims = [c[1] for c in candidates]
-        qs = [c[2] for c in candidates]
-
-        sim_mean = sum(sims) / len(sims) if sims else 0
-        sim_std = (sum((s - sim_mean) ** 2 for s in sims) / len(sims)) ** 0.5 if len(sims) > 1 else 1.0
-        q_mean = sum(qs) / len(qs) if qs else 0
-        q_std = (sum((q - q_mean) ** 2 for q in qs) / len(qs)) ** 0.5 if len(qs) > 1 else 1.0
-
-        sim_std = max(sim_std, 1e-8)
-        q_std = max(q_std, 1e-8)
+        dists = np.array([c[1] for c in candidates], dtype=np.float64)
+        qs = np.array([c[2] for c in candidates], dtype=np.float64)
+        d_mean, d_std = dists.mean(), max(dists.std(), 1e-8)
+        q_mean, q_std = qs.mean(), max(qs.std(), 1e-8)
 
         scored = []
-        for mem_id, sim, q in candidates:
-            z_sim = (sim - sim_mean) / sim_std
+        for mem_id, dist, q in candidates:
+            z_sim = -(dist - d_mean) / d_std
             z_q = (q - q_mean) / q_std
-            composite = (1 - RETRIEVAL_LAMBDA) * z_sim + RETRIEVAL_LAMBDA * z_q
-            scored.append((mem_id, sim, q, composite))
+            composite = (1 - self.q_blend) * z_sim + self.q_blend * z_q
+            scored.append((mem_id, dist, q, composite))
 
         scored.sort(key=lambda x: -x[3])
-        return [(s[0], s[1], s[2]) for s in scored[:k2]]
+        return [(s[0], s[1], s[2]) for s in scored[: self.k2]]
 
-    def _aggregate_predictions(
-        self, retrieved: list[tuple[str, float, float]], market: Market
-    ) -> float:
-        """Aggregate retrieved memory signals into a single probability estimate."""
-        if not retrieved:
-            cat = categorize_text(market.question)
-            return self.category_rates.get(cat, self.global_base_rate)
+    def start_prediction(self, market_id: str):
+        self._current_market_id = market_id
+        self._retrieved_for_market[market_id] = set()
 
-        # Weighted average: weight by similarity * (1 + q_value)
-        total_weight = 0.0
-        weighted_sum = 0.0
-        for mem_id, sim, q in retrieved:
-            mem = self.memory_by_id.get(mem_id)
-            if not mem:
+    def tool_lookup(self, query: str) -> dict:
+        retrieved = self._retrieve(query)
+        if self._current_market_id:
+            for mem_id, _, _ in retrieved:
+                self._retrieved_for_market[self._current_market_id].add(mem_id)
+
+        cur = self.db.cursor()
+        memories_out = []
+        for mem_id, dist, q in retrieved:
+            row = cur.execute(
+                "SELECT fact, category, source_title, source_date "
+                "FROM memories WHERE id = ?", (mem_id,),
+            ).fetchone()
+            if not row:
                 continue
-            # The prediction signal from this memory: did the similar market resolve yes?
-            signal = mem.prediction_at_creation if mem.prediction_at_creation is not None else 0.5
-            weight = sim * (1.0 + max(q, 0.0))
-            weighted_sum += signal * weight
-            total_weight += weight
+            memories_out.append({
+                "fact": row[0],
+                "category": row[1],
+                "source": row[2],
+                "date": row[3],
+                "relevance": round(1.0 / (1.0 + dist), 3),
+                "q_value": round(q, 3),
+            })
 
-        if total_weight == 0:
-            cat = categorize_text(market.question)
-            return self.category_rates.get(cat, self.global_base_rate)
-
-        memory_pred = weighted_sum / total_weight
-
-        # Blend with category base rate (shrinkage toward prior)
-        cat = categorize_text(market.question)
-        base_rate = self.category_rates.get(cat, self.global_base_rate)
-        confidence = min(1.0, len(retrieved) / 5.0)  # more memories = more confidence
-
-        final = confidence * memory_pred + (1 - confidence) * base_rate
-        return max(0.01, min(0.99, final))
-
-    def predict(self, market: Market, dataset: Dataset) -> float:
-        """Predict market outcome using memory retrieval."""
-        retrieved = self._retrieve(market.question, k1=10, k2=5)
-
-        # Track which memories were used (for Q-value updates)
-        self._last_retrieved[market.id] = [r[0] for r in retrieved]
-
-        return self._aggregate_predictions(retrieved, market)
-
-    def update_q_values(self, market: Market, reward: float):
-        """Update Q-values for memories used to predict this market."""
-        mem_ids = self._last_retrieved.get(market.id, [])
-        for mem_id in mem_ids:
-            mem = self.memory_by_id.get(mem_id)
-            if mem:
-                mem.q_value = mem.q_value + Q_LEARNING_RATE * (reward - mem.q_value)
-                mem.q_updates += 1
-
-    def predict_market(self, question: str, dataset: Dataset) -> dict:
-        """Tool interface: predict a free-text market question."""
-        # Create a synthetic market for prediction
-        synthetic = Market(
-            id="query",
-            question=question,
-            description="",
-            category=categorize_text(question),
-            outcome_prices={},
-            volume=0, liquidity=0, active=True,
-        )
-
-        retrieved = self._retrieve(question, k1=10, k2=5)
-        prob = self._aggregate_predictions(retrieved, synthetic)
-
-        # Build response
-        retrieved_info = []
-        for mem_id, sim, q in retrieved:
-            mem = self.memory_by_id.get(mem_id)
-            if mem:
-                retrieved_info.append({
-                    "intent": mem.intent[:100],
-                    "q_value": round(q, 3),
-                    "similarity": round(sim, 3),
-                })
-
-        factors = []
-        cat = categorize_text(question)
-        factors.append({
-            "factor": f"Category base rate ({cat})",
-            "direction": "neutral",
-            "weight": round(self.category_rates.get(cat, self.global_base_rate), 3),
-        })
-        for mem_id, sim, q in retrieved[:3]:
-            mem = self.memory_by_id.get(mem_id)
-            if mem:
-                direction = "up" if mem.prediction_at_creation and mem.prediction_at_creation > 0.5 else "down"
-                factors.append({
-                    "factor": f"Similar market: {mem.intent[:60]}",
-                    "direction": direction,
-                    "weight": round(sim * (1 + max(q, 0)), 3),
-                })
-
+        cat = categorize_text(query)
         return {
-            "probability": round(prob, 4),
-            "confidence": round(min(1.0, len(retrieved) / 5.0), 2),
-            "retrieved_memories": retrieved_info,
-            "factors": factors,
+            "memories": memories_out,
+            "category": cat,
+            "category_base_rate": round(
+                self.category_rates.get(cat, self.global_base_rate), 3
+            ),
+            "num_total_memories": cur.execute(
+                "SELECT COUNT(*) FROM memories"
+            ).fetchone()[0],
         }
+
+    def update_q_values(self, market_id: str, reward: float):
+        mem_ids = self._retrieved_for_market.get(market_id, set())
+        if not mem_ids:
+            return
+        cur = self.db.cursor()
+        for mem_id in mem_ids:
+            row = cur.execute(
+                "SELECT q_value FROM memories WHERE id = ?", (mem_id,)
+            ).fetchone()
+            if row:
+                new_q = row[0] + Q_LEARNING_RATE * (reward - row[0])
+                cur.execute(
+                    "UPDATE memories SET q_value = ?, q_updates = q_updates + 1 WHERE id = ?",
+                    (new_q, mem_id),
+                )
+        self.db.commit()
 
     def get_memories(self) -> list[MemoryTriplet]:
-        return self.memories
+        cur = self.db.cursor()
+        rows = cur.execute(
+            "SELECT id, fact, category, source_title, q_value, q_updates FROM memories"
+        ).fetchall()
+        return [
+            MemoryTriplet(
+                id=r[0], intent=r[1], intent_keywords=[],
+                experience=r[1], experience_type="observation",
+                category=r[2], source_articles=[], source_market=None,
+                q_value=r[4], q_updates=r[5], created_at="",
+                prediction_at_creation=None,
+            )
+            for r in rows
+        ]
 
     def stats(self) -> dict:
-        q_values = [m.q_value for m in self.memories]
+        cur = self.db.cursor()
+        row = cur.execute(
+            "SELECT COUNT(*), AVG(q_value), MAX(q_value), MIN(q_value) FROM memories"
+        ).fetchone()
+        n_cats = cur.execute(
+            "SELECT COUNT(DISTINCT category) FROM memories"
+        ).fetchone()[0]
         return {
-            "num_memories": len(self.memories),
-            "avg_q_value": round(sum(q_values) / len(q_values), 4) if q_values else 0,
-            "max_q_value": round(max(q_values), 4) if q_values else 0,
-            "min_q_value": round(min(q_values), 4) if q_values else 0,
-            "num_categories": len(self.category_rates),
+            "num_memories": row[0],
+            "avg_q_value": round(row[1] or 0, 4),
+            "max_q_value": round(row[2] or 0, 4),
+            "min_q_value": round(row[3] or 0, 4),
+            "num_categories": n_cats,
+            "embedding_dim": self.embedding_dim,
         }
 
 
-# ---------------------------------------------------------------------------
-# Model factory — change this to swap models
-# ---------------------------------------------------------------------------
-
-def create_model() -> MemoryPredictionModel:
-    """Create and return the memory prediction model to use.
-    Modify this function to try different models.
-    """
-    return BaselineMemoryModel()
+def create_model() -> MemoryModel:
+    return SqliteVecMemoryModel(embedding_dim=2048, k1=30, k2=8, q_blend=0.1)
