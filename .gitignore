@@ -10,7 +10,8 @@ wheels/
 .venv/
 
 # Data (large, scraped at runtime)
-data/
+data/*
+!data/README.md
 
 # Agent prompt files (generated per-session by launchers)
 CLAUDE.md
