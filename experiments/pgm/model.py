@@ -39,7 +39,7 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # 384-dim, fast, well-tested
 EMBEDDING_DIM = 384
 SIMILARITY_THRESHOLD = 0.55   # cosine sim to merge into existing event node
 EVIDENCE_SIM_THRESHOLD = 0.40 # min cosine sim for event → market edge
-MAX_PARENTS_PER_MARKET = 3    # max event-node parents per market (keeps CPD small: 2^3=8)
+MAX_PARENTS_PER_MARKET = 5    # max event-node parents per market (2^5=32 CPD entries)
 MAX_CHUNKS_PER_ARTICLE = 3    # sentences to extract per article
 MAX_TOTAL_CHUNKS = 5000       # cap to stay within time budget
 
@@ -398,7 +398,7 @@ class SemanticEventGraph(PredictionModel):
             pairs.append((raw, m.market_price))
         pairs.sort(key=lambda x: x[0])
 
-        n_bins = 20
+        n_bins = 40
         self._cal_bins = []
         bin_size = max(1, len(pairs) // n_bins)
         for i in range(0, len(pairs), bin_size):
@@ -432,7 +432,7 @@ class SemanticEventGraph(PredictionModel):
             pairs.append((blended, m.market_price))
         pairs.sort(key=lambda x: x[0])
 
-        n_bins = 20
+        n_bins = 40
         self._post_blend_cal_bins: list[tuple[float, float]] = []
         bin_size = max(1, len(pairs) // n_bins)
         for i in range(0, len(pairs), bin_size):
