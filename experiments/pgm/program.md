@@ -233,6 +233,17 @@ commit	brier_score	coverage	status	description
 4. status: `keep`, `discard`, or `crash`
 5. short text description of what this experiment tried
 
+### Dashboard
+
+`gen_dashboard.py` generates a standalone HTML dashboard (`dashboard.html`) from `experiments.md` and `results.tsv`. Run it to get a visual overview of experiment progress:
+
+```bash
+cd experiments/pgm && uv run gen_dashboard.py
+open dashboard.html
+```
+
+The dashboard shows: best Brier score, summary stats (total/kept/discarded/crashed), a Brier score trend chart, and a full experiment log table. It reads from both data sources — preferring the richer `experiments.md` when available, falling back to `results.tsv`.
+
 ## The experiment loop
 
 The experiment runs on a dedicated branch (e.g. `arpm/apr9`).

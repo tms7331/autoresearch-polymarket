@@ -7,7 +7,7 @@ import time
 import sys
 
 from prepare import TIME_BUDGET, load_dataset, evaluate
-from model import create_model
+from model import create_model, CACHE_PATH
 
 # ---------------------------------------------------------------------------
 # Main
@@ -76,5 +76,11 @@ print(f"num_markets_eval: {results['num_markets_eval']}")
 print(f"num_nodes:        {model_stats.get('num_nodes', 0)}")
 print(f"num_edges:        {model_stats.get('num_edges', 0)}")
 print(f"num_event_nodes:  {model_stats.get('num_event_nodes', 0)}")
+print(f"num_active_events:{model_stats.get('num_active_event_nodes', 0)}")
+print(f"num_market_nodes: {model_stats.get('num_market_nodes', 0)}")
 print(f"num_articles:     {model_stats.get('num_articles', 0)}")
 print(f"total_seconds:    {total_seconds:.1f}")
+
+# Cache model for inspection
+model.save(CACHE_PATH)
+print(f"\nModel cached to {CACHE_PATH}")

@@ -31,3 +31,7 @@ worktrees/
 results/
 queue/
 results.tsv
+
+# Others
+*.log
+*.html

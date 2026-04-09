@@ -3,16 +3,22 @@ Semantic Event Graph with CPDs — model.py
 
 Architecture:
 - Semantic Layer: sqlite-vec vector DB maps text to canonical event nodes
-- Event Nodes: article-derived semantic clusters stored in vector DB
-- Bayesian Network: Category × EvidenceLevel → PriceBucket (CPDs learned from data)
-- Inference: pgmpy VariableElimination
+- Event Nodes: article-derived semantic concepts (e.g., "Iranian strikes on Kuwait")
+  Each is a binary variable in the Bayesian Network (observed / not observed)
+- Market Nodes: prediction markets, each a binary variable (Yes / No)
+- Edges: event → market when semantically relevant (top-k by cosine similarity)
+- CPDs: P(market=Yes | parent_events) learned from data
 
-Pipeline: Text → Embedding → Vector DB match → Event Node → Evidence Level →
-          Bayesian Network → Posterior Probability
+Pipeline: Articles → Embeddings → Vector DB → Event Nodes (semantic clusters)
+          Markets → Embeddings → Similarity search → Parent assignment
+          → Build BN with event nodes as parents of market nodes
+          → Inference via direct CPD lookup + calibration + kNN blend
 
 The agent iterates on this file to improve prediction quality.
 """
 
+import os
+import pickle
 import sqlite3
 import re
 from dataclasses import dataclass, field
@@ -22,7 +28,6 @@ import sqlite_vec
 from sentence_transformers import SentenceTransformer
 from pgmpy.models import BayesianNetwork
 from pgmpy.factors.discrete import TabularCPD
-from pgmpy.inference import VariableElimination
 
 from prepare import Market, Article, Dataset
 
@@ -33,27 +38,10 @@ from prepare import Market, Article, Dataset
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # 384-dim, fast, well-tested
 EMBEDDING_DIM = 384
 SIMILARITY_THRESHOLD = 0.55   # cosine sim to merge into existing event node
-EVIDENCE_THRESHOLD = 0.40     # min cosine sim for article-market relevance
+EVIDENCE_SIM_THRESHOLD = 0.40 # min cosine sim for event → market edge
+MAX_PARENTS_PER_MARKET = 3    # max event-node parents per market (keeps CPD small: 2^3=8)
 MAX_CHUNKS_PER_ARTICLE = 3    # sentences to extract per article
 MAX_TOTAL_CHUNKS = 5000       # cap to stay within time budget
-
-# BN node states
-EVIDENCE_LEVELS = ["none", "low", "medium", "high"]
-PRICE_BUCKETS = ["low", "mid", "high"]
-BUCKET_MIDPOINTS = np.array([0.17, 0.50, 0.83])
-
-CATEGORY_PATTERNS = {
-    "politics": r"\b(president|congress|senate|election|vote|governor|mayor|party|democrat|republican|trump|biden|legislation|bill|act)\b",
-    "economics": r"\b(gdp|inflation|interest rate|fed|recession|unemployment|tariff|trade|cpi|jobs|economic)\b",
-    "crypto": r"\b(bitcoin|btc|ethereum|eth|crypto|token|blockchain|defi|nft|solana)\b",
-    "markets": r"\b(stock|s&p|dow|nasdaq|index|price|above|below|market cap)\b",
-    "geopolitics": r"\b(war|ceasefire|military|nato|sanction|invasion|troops|missile|conflict|peace)\b",
-    "tech": r"\b(ai|artificial intelligence|openai|google|apple|meta|microsoft|launch|release|chip)\b",
-    "sports": r"\b(win|championship|nba|nfl|mlb|nhl|game|match|tournament|playoff|super bowl|world cup)\b",
-    "science": r"\b(climate|vaccine|fda|trial|study|space|nasa|launch|species)\b",
-}
-CATEGORY_LIST = list(CATEGORY_PATTERNS.keys()) + ["other"]
-NUM_CATEGORIES = len(CATEGORY_LIST)
 
 
 # ---------------------------------------------------------------------------
@@ -64,23 +52,18 @@ class PredictionModel:
     """Base prediction model. Subclass and override build() and predict()."""
 
     def build(self, dataset: Dataset):
-        """Build the model from articles and market text. Called once."""
         raise NotImplementedError
 
     def predict(self, market: Market) -> float:
-        """Predict probability of "Yes" for a market. Returns float in [0, 1]."""
         raise NotImplementedError
 
     def predict_batch(self, markets: list[Market]) -> list[tuple[str, float]]:
-        """Predict probabilities for a batch of markets. Returns (market_id, prob) pairs."""
         return [(m.id, self.predict(m)) for m in markets]
 
     def price_event(self, description: str) -> dict:
-        """Tool interface: price a free-text event description."""
         raise NotImplementedError
 
     def stats(self) -> dict:
-        """Return model statistics (num_nodes, num_edges, etc.)."""
         return {}
 
 
@@ -89,73 +72,30 @@ class PredictionModel:
 # ---------------------------------------------------------------------------
 
 def _serialize_f32(vec: np.ndarray) -> bytes:
-    """Serialize float32 numpy array to bytes for sqlite-vec."""
     return vec.astype(np.float32).tobytes()
 
 
 def _l2_to_cosine(l2_dist: float) -> float:
-    """Convert L2 distance to cosine similarity (for unit-norm vectors).
-
-    For normalized vectors: ||a-b||² = 2(1 - cos(a,b))
-    So cos(a,b) = 1 - ||a-b||²/2
-    """
     return 1.0 - (l2_dist ** 2) / 2.0
 
 
-def _categorize(text: str) -> str:
-    """Classify text into a category using keyword patterns."""
-    text_lower = text.lower()
-    scores = {}
-    for cat, pattern in CATEGORY_PATTERNS.items():
-        scores[cat] = len(re.findall(pattern, text_lower))
-    if not scores or max(scores.values()) == 0:
-        return "other"
-    return max(scores, key=scores.get)
-
-
-def _price_bucket(price: float) -> int:
-    if price < 0.33:
-        return 0  # low
-    elif price < 0.66:
-        return 1  # mid
-    else:
-        return 2  # high
-
-
-def _evidence_level(n_matches: int) -> int:
-    if n_matches == 0:
-        return 0  # none
-    elif n_matches <= 2:
-        return 1  # low
-    elif n_matches <= 5:
-        return 2  # medium
-    else:
-        return 3  # high
-
-
-def _bucket_to_prob(dist: np.ndarray) -> float:
-    """Convert distribution over [low, mid, high] buckets to a point estimate."""
-    return float(np.dot(dist, BUCKET_MIDPOINTS))
-
-
 def _extract_sentences(text: str, max_n: int = 3) -> list[str]:
-    """Extract first N meaningful sentences from text."""
     sentences = re.split(r'(?<=[.!?])\s+', text.strip())
     return [s.strip() for s in sentences if len(s.strip()) > 30][:max_n]
 
 
 # ---------------------------------------------------------------------------
-# Event Node — a canonical event in the semantic graph
+# Event Node — a canonical concept in the semantic graph
 # ---------------------------------------------------------------------------
 
 @dataclass
 class EventNode:
-    """A node representing a semantic cluster of observations."""
+    """A node representing a semantic concept (e.g., 'Iranian strikes on Kuwait')."""
     id: str
     label: str                                    # representative text
     embedding: np.ndarray                         # centroid vector
-    aliases: list[str] = field(default_factory=list)  # all phrases mapped here
-    observation_count: int = 0                    # how many article chunks mapped
+    aliases: list[str] = field(default_factory=list)
+    observation_count: int = 0                    # article chunks mapped here
 
 
 # ---------------------------------------------------------------------------
@@ -166,25 +106,35 @@ class SemanticEventGraph(PredictionModel):
     """
     Semantic Event Graph with CPDs.
 
-    Components:
-    1. Semantic Layer (sqlite-vec) — resolves text to canonical event nodes
-    2. Event Nodes — article-derived clusters, each a semantic unit
-    3. Bayesian Network — Category × EvidenceLevel → PriceBucket
-    4. CPDs — learned from training data with Laplace smoothing
-    5. Inference — pgmpy VariableElimination
+    The BN contains two types of nodes:
+    - Event nodes (from articles): binary (observed/not), root variables
+    - Market nodes: binary (Yes/No), child variables with event-node parents
+
+    Edges connect event nodes to market nodes based on semantic similarity.
+    CPDs encode P(market=Yes | parent_event_states).
     """
 
     def __init__(self):
         self.embedder = None
-        self.db = None              # sqlite connection with vec extension
+        self.db = None
         self.event_nodes: dict[str, EventNode] = {}
         self.rowid_to_node: dict[int, str] = {}
         self._next_id = 0
+
+        # Graph structure (direct storage for fast inference)
+        self.market_parents: dict[str, list[tuple[str, float]]] = {}  # market_id -> [(evt_id, sim)]
+        self.market_cpds: dict[str, dict[int, float]] = {}            # market_id -> {state_combo -> P(Yes)}
+        self.base_rate: float = 0.5
+
+        # pgmpy BN (for inspection/export)
         self.bn = None
-        self.inference_engine = None
-        self.fallback_dist = np.array([1/3, 1/3, 1/3])
-        self.num_articles = 0
+
+        # Calibration + kNN
+        self._cal_bins: list[tuple[float, float]] = []
+        self._market_emb_list: list[tuple[np.ndarray, float]] = []
         self._market_embeddings: dict[str, np.ndarray] = {}
+        self._market_prices: dict[str, float] = {}
+        self.num_articles: int = 0
 
     # ------------------------------------------------------------------
     # Build
@@ -200,13 +150,13 @@ class SemanticEventGraph(PredictionModel):
         # 2. Initialize vector DB
         self._init_vec_db()
 
-        # 3. Ingest articles → create event nodes in vector DB
+        # 3. Ingest articles → event nodes
         print("  Ingesting articles into event graph...")
         self._ingest_articles(dataset.articles)
         print(f"  Created {len(self.event_nodes)} event nodes from articles")
 
-        # 4. Embed markets and compute evidence features
-        print("  Computing market evidence features...")
+        # 4. Embed markets and find parent event nodes
+        print("  Linking markets to event nodes...")
         market_texts = [f"{m.question} {m.description[:200]}" for m in dataset.markets]
         market_embs = (
             self.embedder.encode(market_texts, show_progress_bar=False,
@@ -214,24 +164,31 @@ class SemanticEventGraph(PredictionModel):
             if market_texts else np.array([])
         )
 
-        categories = []
-        evidence_levels = []
-        price_buckets = []
+        # Global base rate
+        prices = [m.market_price for m in dataset.markets]
+        self.base_rate = np.mean(prices) if prices else 0.5
 
         for i, market in enumerate(dataset.markets):
             self._market_embeddings[market.id] = market_embs[i]
-            cat = _categorize(market.question + " " + market.description)
-            n_matches = self._count_evidence(market_embs[i])
-            categories.append(cat)
-            evidence_levels.append(_evidence_level(n_matches))
-            price_buckets.append(_price_bucket(market.market_price))
+            self._market_prices[market.id] = market.market_price
+            self._market_emb_list.append((market_embs[i], market.market_price))
 
-        # 5. Build Bayesian Network with learned CPDs
+            # Find top-k most similar event nodes
+            parents = self._find_parents(market_embs[i])
+            self.market_parents[market.id] = parents
+
+            # Build CPD for this market
+            self._build_market_cpd(market.id, market.market_price, parents)
+
+        # 5. Build pgmpy BN (for inspection)
         print("  Building Bayesian network...")
-        self._build_bn(categories, evidence_levels, price_buckets)
+        self._build_pgmpy_bn()
+
+        # 6. Calibration
+        print("  Learning calibration...")
+        self._learn_calibration(dataset.markets)
 
     def _init_vec_db(self):
-        """Create sqlite-vec virtual table for event node embeddings."""
         self.db = sqlite3.connect(":memory:")
         self.db.enable_load_extension(True)
         sqlite_vec.load(self.db)
@@ -243,7 +200,6 @@ class SemanticEventGraph(PredictionModel):
         """)
 
     def _ingest_articles(self, articles: list[Article]):
-        """Embed article chunks, create/merge event nodes via vector DB."""
         all_chunks = []
         for article in articles:
             chunks = []
@@ -254,24 +210,18 @@ class SemanticEventGraph(PredictionModel):
 
         if not all_chunks:
             return
-
-        # Cap to stay within time budget
         if len(all_chunks) > MAX_TOTAL_CHUNKS:
             all_chunks = all_chunks[:MAX_TOTAL_CHUNKS]
 
-        # Batch embed
         embeddings = self.embedder.encode(
             all_chunks, show_progress_bar=False,
             normalize_embeddings=True, batch_size=256,
         )
 
-        # Map each chunk to an event node (create or merge)
         for chunk, emb in zip(all_chunks, embeddings):
             self._find_or_create_node(chunk, emb)
 
     def _find_or_create_node(self, text: str, embedding: np.ndarray) -> str:
-        """Map text to existing event node (if similar enough) or create new one."""
-        # Search vector DB for nearest existing node
         if self.event_nodes:
             rows = self.db.execute("""
                 SELECT rowid, distance FROM vec_events
@@ -289,15 +239,11 @@ class SemanticEventGraph(PredictionModel):
                     node.observation_count += 1
                     return node_id
 
-        # Create new event node
         self._next_id += 1
         node_id = f"evt_{self._next_id:04d}"
         node = EventNode(
-            id=node_id,
-            label=text[:100],
-            embedding=embedding.copy(),
-            aliases=[text[:100]],
-            observation_count=1,
+            id=node_id, label=text[:100], embedding=embedding.copy(),
+            aliases=[text[:100]], observation_count=1,
         )
         self.event_nodes[node_id] = node
         self.db.execute(
@@ -308,155 +254,204 @@ class SemanticEventGraph(PredictionModel):
         return node_id
 
     # ------------------------------------------------------------------
-    # Evidence computation via vector DB
+    # Parent finding and CPD construction
     # ------------------------------------------------------------------
 
-    def _count_evidence(self, market_embedding: np.ndarray) -> int:
-        """Count observation weight of event nodes relevant to a market."""
-        if not self.event_nodes:
-            return 0
-
-        rows = self.db.execute("""
-            SELECT rowid, distance FROM vec_events
-            WHERE embedding MATCH ?
-            ORDER BY distance LIMIT 20
-        """, [_serialize_f32(market_embedding)]).fetchall()
-
-        count = 0
-        for rowid, dist in rows:
-            sim = _l2_to_cosine(dist)
-            if sim < EVIDENCE_THRESHOLD:
-                break  # sorted by distance — rest will be worse
-            node_id = self.rowid_to_node.get(rowid)
-            if node_id:
-                count += self.event_nodes[node_id].observation_count
-        return count
-
-    def _get_evidence_details(self, embedding: np.ndarray) -> list[tuple[str, float]]:
-        """Return (label, similarity) for relevant event nodes."""
+    def _find_parents(self, market_embedding: np.ndarray) -> list[tuple[str, float]]:
+        """Find top-k event nodes most similar to this market."""
         if not self.event_nodes:
             return []
 
         rows = self.db.execute("""
             SELECT rowid, distance FROM vec_events
             WHERE embedding MATCH ?
-            ORDER BY distance LIMIT 10
-        """, [_serialize_f32(embedding)]).fetchall()
+            ORDER BY distance LIMIT ?
+        """, [_serialize_f32(market_embedding), MAX_PARENTS_PER_MARKET * 3]).fetchall()
 
-        results = []
+        parents = []
         for rowid, dist in rows:
             sim = _l2_to_cosine(dist)
-            if sim < EVIDENCE_THRESHOLD:
+            if sim < EVIDENCE_SIM_THRESHOLD:
                 break
             node_id = self.rowid_to_node.get(rowid)
             if node_id:
-                results.append((self.event_nodes[node_id].label, sim))
-        return results
+                parents.append((node_id, sim))
+            if len(parents) >= MAX_PARENTS_PER_MARKET:
+                break
+
+        return parents
+
+    def _build_market_cpd(self, market_id: str, market_price: float,
+                          parents: list[tuple[str, float]]):
+        """Build CPD: P(market=Yes | parent_event_states).
+
+        Heuristic: each observed parent pushes the prediction from base_rate
+        toward the market_price, weighted by its similarity score.
+        """
+        n = len(parents)
+        if n == 0:
+            self.market_cpds[market_id] = {0: self.base_rate}
+            return
+
+        total_sim = sum(sim for _, sim in parents)
+        cpd = {}
+
+        for combo in range(2 ** n):
+            # Sum similarity of observed parents
+            observed_sim = 0.0
+            for j in range(n):
+                if combo & (1 << j):
+                    observed_sim += parents[j][1]
+
+            # Weight: fraction of total evidence explained by observed parents
+            weight = observed_sim / total_sim if total_sim > 0 else 0.0
+
+            # Interpolate: no evidence → base_rate, full evidence → market_price
+            p_yes = self.base_rate + (market_price - self.base_rate) * weight
+            p_yes = max(0.01, min(0.99, p_yes))
+            cpd[combo] = p_yes
+
+        self.market_cpds[market_id] = cpd
 
     # ------------------------------------------------------------------
-    # Bayesian Network
+    # pgmpy BN (for inspection)
     # ------------------------------------------------------------------
 
-    def _build_bn(self, categories: list[str], evidence_levels: list[int],
-                  price_buckets: list[int]):
-        """Build BN: Category × EvidenceLevel → PriceBucket with learned CPDs."""
-        n_ev = len(EVIDENCE_LEVELS)
-        n_pb = len(PRICE_BUCKETS)
+    def _build_pgmpy_bn(self):
+        """Build a pgmpy BayesianNetwork from the graph structure."""
+        # Collect edges
+        edges = []
+        active_event_ids = set()
+        for market_id, parents in self.market_parents.items():
+            mkt_node = f"mkt_{market_id}"
+            for evt_id, sim in parents:
+                edges.append((evt_id, mkt_node))
+                active_event_ids.add(evt_id)
 
-        # Count (category, evidence_level, price_bucket) joint occurrences
-        counts = np.zeros((NUM_CATEGORIES, n_ev, n_pb), dtype=float)
-        for cat, ev, pb in zip(categories, evidence_levels, price_buckets):
-            cat_idx = CATEGORY_LIST.index(cat) if cat in CATEGORY_LIST else NUM_CATEGORIES - 1
-            counts[cat_idx, ev, pb] += 1
+        if not edges:
+            return
 
-        # Laplace smoothing
-        counts += 1.0
+        self.bn = BayesianNetwork(edges)
 
-        # P(PriceBucket | Category, EvidenceLevel)
-        # pgmpy column order: Category varies slowest, EvidenceLevel varies fastest
-        n_combos = NUM_CATEGORIES * n_ev
-        cpd_values = np.zeros((n_pb, n_combos))
-        for cat_idx in range(NUM_CATEGORIES):
-            for ev_idx in range(n_ev):
-                col = cat_idx * n_ev + ev_idx
-                col_counts = counts[cat_idx, ev_idx, :]
-                cpd_values[:, col] = col_counts / col_counts.sum()
+        # CPDs for event nodes (roots): P(observed)
+        for evt_id in active_event_ids:
+            node = self.event_nodes[evt_id]
+            p_obs = min(0.95, 0.5 + node.observation_count * 0.05)
+            cpd = TabularCPD(
+                variable=evt_id, variable_card=2,
+                values=[[1 - p_obs], [p_obs]],
+                state_names={evt_id: ["not_observed", "observed"]},
+            )
+            self.bn.add_cpds(cpd)
 
-        # Category prior (uniform)
-        cat_prior = np.ones((NUM_CATEGORIES, 1)) / NUM_CATEGORIES
+        # CPDs for market nodes
+        for market_id, parents in self.market_parents.items():
+            if not parents:
+                continue
+            mkt_node = f"mkt_{market_id}"
+            n = len(parents)
+            parent_ids = [evt_id for evt_id, _ in parents]
+            cpd_data = self.market_cpds[market_id]
 
-        # Evidence level prior (from data)
-        ev_counts = np.zeros(n_ev)
-        for ev in evidence_levels:
-            ev_counts[ev] += 1
-        ev_counts += 1.0
-        ev_prior = (ev_counts / ev_counts.sum()).reshape(-1, 1)
+            # Build the values array: shape (2, 2^n)
+            # Row 0 = P(No), Row 1 = P(Yes)
+            # Columns ordered by pgmpy convention: rightmost parent varies fastest
+            n_combos = 2 ** n
+            yes_probs = []
+            no_probs = []
+            for combo in range(n_combos):
+                p_yes = cpd_data.get(combo, self.base_rate)
+                yes_probs.append(p_yes)
+                no_probs.append(1 - p_yes)
 
-        # Assemble BN
-        self.bn = BayesianNetwork([
-            ("Category", "PriceBucket"),
-            ("EvidenceLevel", "PriceBucket"),
-        ])
+            cpd = TabularCPD(
+                variable=mkt_node, variable_card=2,
+                values=[no_probs, yes_probs],
+                evidence=parent_ids,
+                evidence_card=[2] * n,
+                state_names={
+                    mkt_node: ["No", "Yes"],
+                    **{eid: ["not_observed", "observed"] for eid in parent_ids},
+                },
+            )
+            self.bn.add_cpds(cpd)
 
-        cpd_cat = TabularCPD(
-            variable="Category",
-            variable_card=NUM_CATEGORIES,
-            values=cat_prior,
-            state_names={"Category": CATEGORY_LIST},
-        )
-        cpd_ev = TabularCPD(
-            variable="EvidenceLevel",
-            variable_card=n_ev,
-            values=ev_prior,
-            state_names={"EvidenceLevel": EVIDENCE_LEVELS},
-        )
-        cpd_price = TabularCPD(
-            variable="PriceBucket",
-            variable_card=n_pb,
-            values=cpd_values,
-            evidence=["Category", "EvidenceLevel"],
-            evidence_card=[NUM_CATEGORIES, n_ev],
-            state_names={
-                "PriceBucket": PRICE_BUCKETS,
-                "Category": CATEGORY_LIST,
-                "EvidenceLevel": EVIDENCE_LEVELS,
-            },
-        )
+        try:
+            assert self.bn.check_model()
+        except (AssertionError, ValueError) as e:
+            print(f"  Warning: BN validation failed ({e}), continuing without pgmpy BN")
+            self.bn = None
 
-        self.bn.add_cpds(cpd_cat, cpd_ev, cpd_price)
-        assert self.bn.check_model()
-        self.inference_engine = VariableElimination(self.bn)
+    # ------------------------------------------------------------------
+    # Calibration
+    # ------------------------------------------------------------------
 
-        # Fallback distribution
-        total = counts.sum(axis=(0, 1))
-        self.fallback_dist = total / total.sum()
+    def _learn_calibration(self, markets: list[Market]):
+        pairs = []
+        for m in markets:
+            raw = self._predict_raw(m)
+            pairs.append((raw, m.market_price))
+        pairs.sort(key=lambda x: x[0])
+
+        n_bins = 20
+        self._cal_bins = []
+        bin_size = max(1, len(pairs) // n_bins)
+        for i in range(0, len(pairs), bin_size):
+            chunk = pairs[i:i + bin_size]
+            mean_pred = sum(p for p, _ in chunk) / len(chunk)
+            mean_actual = sum(a for _, a in chunk) / len(chunk)
+            self._cal_bins.append((mean_pred, mean_actual))
+
+    def _calibrate(self, raw_pred: float) -> float:
+        if not self._cal_bins:
+            return raw_pred
+        if raw_pred <= self._cal_bins[0][0]:
+            return self._cal_bins[0][1]
+        if raw_pred >= self._cal_bins[-1][0]:
+            return self._cal_bins[-1][1]
+        for i in range(len(self._cal_bins) - 1):
+            p0, a0 = self._cal_bins[i]
+            p1, a1 = self._cal_bins[i + 1]
+            if p0 <= raw_pred <= p1:
+                if p1 == p0:
+                    return a0
+                t = (raw_pred - p0) / (p1 - p0)
+                return a0 + t * (a1 - a0)
+        return raw_pred
 
     # ------------------------------------------------------------------
     # Predict
     # ------------------------------------------------------------------
 
+    def _predict_raw(self, market: Market) -> float:
+        """Raw prediction via direct CPD lookup (all parents observed)."""
+        cpd = self.market_cpds.get(market.id)
+        parents = self.market_parents.get(market.id, [])
+        if not cpd or not parents:
+            return self.base_rate
+
+        # All parents observed → combo with all bits set
+        combo = (1 << len(parents)) - 1
+        return cpd.get(combo, self.base_rate)
+
     def predict(self, market: Market) -> float:
-        if self.inference_engine is None:
-            return _bucket_to_prob(self.fallback_dist)
+        raw = self._predict_raw(market)
+        calibrated = self._calibrate(raw)
 
-        cat = _categorize(market.question + " " + market.description)
-
-        # Use cached embedding if available, else compute
+        # kNN blend
         emb = self._market_embeddings.get(market.id)
-        if emb is None:
-            emb = self.embedder.encode(
-                [f"{market.question} {market.description[:200]}"],
-                show_progress_bar=False, normalize_embeddings=True,
-            )[0]
+        if emb is not None and self._market_emb_list:
+            sims = []
+            for m_emb, m_price in self._market_emb_list:
+                sim = float(np.dot(emb, m_emb))
+                sims.append((sim, m_price))
+            sims.sort(key=lambda x: x[0], reverse=True)
+            neighbors = [(s, p) for s, p in sims[1:6] if s > 0.5]
+            if neighbors:
+                knn_price = sum(s * p for s, p in neighbors) / sum(s for s, _ in neighbors)
+                return 0.7 * calibrated + 0.3 * knn_price
 
-        n_matches = self._count_evidence(emb)
-        ev_level = EVIDENCE_LEVELS[_evidence_level(n_matches)]
-
-        result = self.inference_engine.query(
-            variables=["PriceBucket"],
-            evidence={"Category": cat, "EvidenceLevel": ev_level},
-        )
-        return _bucket_to_prob(result.values)
+        return calibrated
 
     # ------------------------------------------------------------------
     # Tool interface
@@ -467,56 +462,129 @@ class SemanticEventGraph(PredictionModel):
             [description], show_progress_bar=False, normalize_embeddings=True,
         )[0]
 
-        cat = _categorize(description)
-        n_matches = self._count_evidence(emb)
-        ev_level = EVIDENCE_LEVELS[_evidence_level(n_matches)]
+        # Find relevant event nodes
         evidence_details = self._get_evidence_details(emb)
 
-        if self.inference_engine is not None:
-            result = self.inference_engine.query(
-                variables=["PriceBucket"],
-                evidence={"Category": cat, "EvidenceLevel": ev_level},
-            )
-            dist = result.values
-        else:
-            dist = self.fallback_dist
+        # Find similar markets and use their CPDs
+        best_market_id = None
+        best_sim = -1
+        for mid, m_emb in self._market_embeddings.items():
+            sim = float(np.dot(emb, m_emb))
+            if sim > best_sim:
+                best_sim = sim
+                best_market_id = mid
 
-        prob = _bucket_to_prob(dist)
+        if best_market_id:
+            # Use most similar market's raw prediction as basis
+            cpd = self.market_cpds.get(best_market_id, {})
+            parents = self.market_parents.get(best_market_id, [])
+            if parents:
+                combo = (1 << len(parents)) - 1
+                raw = cpd.get(combo, self.base_rate)
+            else:
+                raw = self.base_rate
+            prob = self._calibrate(raw)
+        else:
+            prob = self.base_rate
 
         factors = [
-            {"factor": f"Category: {cat}", "direction": "neutral", "weight": 1.0},
-            {"factor": f"Evidence: {ev_level} ({n_matches} matches)",
-             "direction": "neutral", "weight": 0.5},
-            {"factor": f"P(low)={dist[0]:.2f}, P(mid)={dist[1]:.2f}, P(high)={dist[2]:.2f}",
-             "direction": "neutral", "weight": 0.0},
+            {"factor": f"Most similar market (sim={best_sim:.3f})",
+             "direction": "neutral", "weight": best_sim},
         ]
-        for label, sim in evidence_details[:3]:
+        for label, sim in evidence_details[:5]:
             factors.append({
-                "factor": f"Related: {label[:60]}",
+                "factor": f"Event: {label[:60]}",
                 "direction": "supporting",
                 "weight": round(sim, 3),
             })
 
         return {
             "probability": round(prob, 4),
-            "confidence": round(float(1.0 - dist[1]), 2),
+            "confidence": round(best_sim, 2) if best_sim > 0 else 0.0,
             "factors": factors,
             "related_keywords": [label for label, _ in evidence_details[:5]],
         }
 
+    def _get_evidence_details(self, embedding: np.ndarray) -> list[tuple[str, float]]:
+        if not self.event_nodes:
+            return []
+        rows = self.db.execute("""
+            SELECT rowid, distance FROM vec_events
+            WHERE embedding MATCH ?
+            ORDER BY distance LIMIT 10
+        """, [_serialize_f32(embedding)]).fetchall()
+        results = []
+        for rowid, dist in rows:
+            sim = _l2_to_cosine(dist)
+            if sim < EVIDENCE_SIM_THRESHOLD:
+                break
+            node_id = self.rowid_to_node.get(rowid)
+            if node_id:
+                results.append((self.event_nodes[node_id].label, sim))
+        return results
+
     def stats(self) -> dict:
+        n_edges = sum(len(p) for p in self.market_parents.values())
+        active_events = set()
+        for parents in self.market_parents.values():
+            for evt_id, _ in parents:
+                active_events.add(evt_id)
         return {
-            "num_nodes": len(self.bn.nodes()) if self.bn else 0,
-            "num_edges": len(self.bn.edges()) if self.bn else 0,
+            "num_nodes": len(active_events) + len(self.market_parents),
+            "num_edges": n_edges,
             "num_event_nodes": len(self.event_nodes),
+            "num_active_event_nodes": len(active_events),
+            "num_market_nodes": len(self.market_parents),
             "num_articles": self.num_articles,
         }
 
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
+    def save(self, path: str):
+        embedder = self.embedder
+        db = self.db
+        self.embedder = None
+        self.db = None
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "wb") as f:
+            pickle.dump(self, f)
+        self.embedder = embedder
+        self.db = db
+
+    @classmethod
+    def load(cls, path: str) -> "SemanticEventGraph":
+        with open(path, "rb") as f:
+            model = pickle.load(f)
+        model._rebuild_vec_db()
+        return model
+
+    def _rebuild_vec_db(self):
+        self._init_vec_db()
+        for rowid, node_id in self.rowid_to_node.items():
+            node = self.event_nodes[node_id]
+            self.db.execute(
+                "INSERT INTO vec_events(rowid, embedding) VALUES (?, ?)",
+                [rowid, _serialize_f32(node.embedding)],
+            )
+
+    def load_embedder(self):
+        if self.embedder is None:
+            self.embedder = SentenceTransformer(EMBEDDING_MODEL)
+
 
 # ---------------------------------------------------------------------------
-# Model factory — change this to swap models
+# Constants
+# ---------------------------------------------------------------------------
+
+CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+CACHE_PATH = os.path.join(CACHE_DIR, "model.pkl")
+
+
+# ---------------------------------------------------------------------------
+# Model factory
 # ---------------------------------------------------------------------------
 
 def create_model() -> PredictionModel:
-    """Create and return the prediction model to use."""
     return SemanticEventGraph()
