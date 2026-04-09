@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARPM Memory — Model Inspector</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f9fafb; color: #111827; padding: 2rem;
+      max-width: 1100px; margin: 0 auto;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+    .subtitle { color: #6b7280; font-size: 0.85rem; margin-bottom: 2rem; }
+    h2 { font-size: 1.2rem; margin: 2.5rem 0 1rem; border-bottom: 2px solid #e5e7eb; padding-bottom: 0.5rem; }
+    h3 { font-size: 1rem; margin: 1.5rem 0 0.75rem; color: #374151; }
+    .note { color: #6b7280; font-size: 0.85rem; margin-bottom: 1rem; }
+    .stats { display: flex; gap: 1.5rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+    .stat { background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 0.8rem 1.2rem; }
+    .stat-value { font-size: 1.3rem; font-weight: bold; font-family: "SF Mono", monospace; }
+    .stat-label { font-size: 0.7rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
+
+    /* Category bars */
+    .cat-chart { margin: 1rem 0; }
+    .cat-row { display: flex; align-items: center; gap: 0.5rem; margin: 0.3rem 0; }
+    .cat-label { width: 100px; font-size: 0.8rem; text-align: right; color: #374151; }
+    .cat-bar { height: 20px; border-radius: 3px; min-width: 4px; }
+    .cat-count { font-size: 0.75rem; color: #6b7280; }
+    .cat-tag { background: #f3f4f6; padding: 0.15rem 0.5rem; border-radius: 10px; font-size: 0.75rem; color: #374151; }
+
+    /* Q badges */
+    .q-badge { color: white; padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.75rem; font-family: "SF Mono", monospace; }
+
+    /* Prob badges */
+    .prob-badge { color: white; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: bold; font-family: "SF Mono", monospace; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; background: white; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; font-size: 0.8rem; margin: 0.5rem 0; }
+    th { background: #f3f4f6; text-align: left; padding: 0.5rem 0.7rem; font-weight: 600; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: #374151; }
+    td { padding: 0.4rem 0.7rem; border-top: 1px solid #f3f4f6; }
+    tr:hover { background: #fafbfc; }
+    .empty { color: #9ca3af; font-style: italic; font-size: 0.85rem; }
+
+    /* Retrieval cards */
+    .retrieval-card { background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    .retrieval-query { font-weight: 600; margin-bottom: 0.5rem; }
+    .retrieval-meta { font-size: 0.8rem; color: #6b7280; margin-bottom: 0.5rem; }
+    .retrieval-table { font-size: 0.78rem; }
+
+    /* SVG */
+    svg { background: white; border: 1px solid #e5e7eb; border-radius: 8px; }
+
+    section { margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>ARPM Memory — Model Inspector</h1>
+  <p class="subtitle">sqlite-vec memory bank with MemRL Q-learning &mdash; generated 2026-04-09 15:17</p>
+  
+    <section>
+      <h2>Memory Bank Overview</h2>
+      <div class="stats">
+        <div class="stat"><div class="stat-value">4275</div><div class="stat-label">Total Memories</div></div>
+        <div class="stat"><div class="stat-value">9</div><div class="stat-label">Categories</div></div>
+        <div class="stat"><div class="stat-value">0.0415</div><div class="stat-label">Avg Q-Value</div></div>
+        <div class="stat"><div class="stat-value">0.9869</div><div class="stat-label">Max Q-Value</div></div>
+        <div class="stat"><div class="stat-value">2048</div><div class="stat-label">Embedding Dim</div></div>
+      </div>
+
+      <h3>Memories by Category</h3>
+      <div class="cat-chart">
+        
+        <div class="cat-row">
+          <span class="cat-label">other</span>
+          <div class="cat-bar" style="width:300px;background:rgb(16, 106, 69)"></div>
+          <span class="cat-count">1835 memories (avg Q: 0.044)</span>
+        </div>
+        <div class="cat-row">
+          <span class="cat-label">conflict</span>
+          <div class="cat-bar" style="width:268px;background:rgb(16, 105, 69)"></div>
+          <span class="cat-count">1641 memories (avg Q: 0.037)</span>
+        </div>
+        <div class="cat-row">
+          <span class="cat-label">politics</span>
+          <div class="cat-bar" style="width:82px;background:rgb(16, 106, 69)"></div>
+          <span class="cat-count">500 memories (avg Q: 0.045)</span>
+        </div>
+        <div class="cat-row">
+          <span class="cat-label">markets</span>
+          <div class="cat-bar" style="width:20px;background:rgb(16, 103, 69)"></div>
+          <span class="cat-count">121 memories (avg Q: 0.021)</span>
+        </div>
+        <div class="cat-row">
+          <span class="cat-label">health</span>
+          <div class="cat-bar" style="width:16px;background:rgb(16, 105, 69)"></div>
+          <span class="cat-count">95 memories (avg Q: 0.038)</span>
+        </div>
+        <div class="cat-row">
+          <span class="cat-label">economics</span>
+          <div class="cat-bar" style="width:8px;background:rgb(16, 111, 69)"></div>
+          <span class="cat-count">50 memories (avg Q: 0.077)</span>
+        </div>
+        <div class="cat-row">
+          <span class="cat-label">science</span>
+          <div class="cat-bar" style="width:4px;background:rgb(16, 111, 69)"></div>
+          <span class="cat-count">18 memories (avg Q: 0.074)</span>
+        </div>
+        <div class="cat-row">
+          <span class="cat-label">technology</span>
+          <div class="cat-bar" style="width:4px;background:rgb(16, 100, 69)"></div>
+          <span class="cat-count">12 memories (avg Q: 0.000)</span>
+        </div>
+        <div class="cat-row">
+          <span class="cat-label">sports</span>
+          <div class="cat-bar" style="width:4px;background:rgb(16, 151, 69)"></div>
+          <span class="cat-count">3 memories (avg Q: 0.331)</span>
+        </div>
+      </div>
+    </section>
+    
+
+    <section>
+      <h2>Q-Value Distribution</h2>
+      <svg width="600" height="180" xmlns="http://www.w3.org/2000/svg">
+        <line x1="40" y1="140" x2="560" y2="140" stroke="#d1d5db" stroke-width="1"/>
+
+        <rect x="40.0" y="40.0" width="25.0" height="100.0" fill="rgb(16, 103, 69)" rx="2"/>
+<rect x="66.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 111, 69)" rx="2"/>
+<rect x="92.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 119, 69)" rx="2"/>
+<rect x="118.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 127, 69)" rx="2"/>
+<rect x="144.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 134, 69)" rx="2"/>
+<rect x="170.0" y="135.2" width="25.0" height="4.8" fill="rgb(16, 142, 69)" rx="2"/>
+<rect x="196.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 150, 69)" rx="2"/>
+<rect x="222.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 158, 69)" rx="2"/>
+<rect x="248.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 165, 69)" rx="2"/>
+<rect x="274.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 173, 69)" rx="2"/>
+<rect x="300.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 181, 69)" rx="2"/>
+<rect x="326.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 189, 69)" rx="2"/>
+<rect x="352.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 196, 69)" rx="2"/>
+<rect x="378.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 204, 69)" rx="2"/>
+<rect x="404.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 212, 69)" rx="2"/>
+<rect x="430.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 220, 69)" rx="2"/>
+<rect x="456.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 227, 69)" rx="2"/>
+<rect x="482.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 235, 69)" rx="2"/>
+<rect x="508.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 243, 69)" rx="2"/>
+<rect x="534.0" y="139.0" width="25.0" height="1.0" fill="rgb(16, 251, 69)" rx="2"/>
+
+        <text x="40.0" y="172" font-size="10" fill="#6b7280">0.0</text>
+<text x="144.0" y="172" font-size="10" fill="#6b7280">0.2</text>
+<text x="248.0" y="172" font-size="10" fill="#6b7280">0.4</text>
+<text x="352.0" y="172" font-size="10" fill="#6b7280">0.6</text>
+<text x="456.0" y="172" font-size="10" fill="#6b7280">0.8</text>
+
+        <text x="560" y="20" text-anchor="end" font-size="11" fill="#6b7280">mean=0.041  std=0.146  median=0.000</text>
+      </svg>
+    </section>
+    
+
+    <section>
+      <h2>Memory Quality</h2>
+      
+        <h3>Top 10 Memories (highest Q-value)</h3>
+        <table class="mem-table">
+          <thead><tr><th>Q-Value</th><th>Updates</th><th>Category</th><th>Market Question</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 252, 69)">0.987</span></td>
+              <td>22</td>
+              <td><span class="cat-tag">conflict</span></td>
+              <td>After a US-Iran ceasefire deal, strikes slow but tensions remain. Will this hold</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 249, 69)">0.965</span></td>
+              <td>16</td>
+              <td><span class="cat-tag">other</span></td>
+              <td>Evacuations during the 2026 Iran warRussia in the 2026 Iran warRussiaevacuates19</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 248, 69)">0.961</span></td>
+              <td>13</td>
+              <td><span class="cat-tag">conflict</span></td>
+              <td>Ukraine-Russia Ceasefire Talks Stall Over Territory Disputes</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 248, 69)">0.957</span></td>
+              <td>12</td>
+              <td><span class="cat-tag">other</span></td>
+              <td>Russia in the 2026 Iran warRussiaevacuates198 more staff from Iran&#x27;sBushehr Nucl</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 247, 69)">0.950</span></td>
+              <td>10</td>
+              <td><span class="cat-tag">other</span></td>
+              <td>Federal Reserve Signals Potential Rate Hold at June Meeting</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 246, 69)">0.947</span></td>
+              <td>12</td>
+              <td><span class="cat-tag">conflict</span></td>
+              <td>Israel&#x27;s perpetual war with Iran may be hard to win with military might alone</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 246, 69)">0.946</span></td>
+              <td>15</td>
+              <td><span class="cat-tag">politics</span></td>
+              <td>Ukraine’s president said Putin would not stop if he got the Donbas, and would ne</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 245, 69)">0.942</span></td>
+              <td>9</td>
+              <td><span class="cat-tag">conflict</span></td>
+              <td>The Israeli military says that it has killedMohammad Reza Ashrafi Kahi, the head</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td>
+              <td>200</td>
+              <td><span class="cat-tag">other</span></td>
+              <td>By Parisa Hafezi, Maya Gebeily, Maayan Lubell and Ariba Shahid</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td>
+              <td>200</td>
+              <td><span class="cat-tag">other</span></td>
+              <td>Japaneseprime ministerSanae Takaichisays thather governmentis planning to holdsu</td>
+            </tr></tbody>
+        </table>
+      
+        <h3>Bottom 10 Memories (lowest Q-value)</h3>
+        <table class="mem-table">
+          <thead><tr><th>Q-Value</th><th>Updates</th><th>Category</th><th>Market Question</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 100, 69)">0.000</span></td>
+              <td>0</td>
+              <td><span class="cat-tag">other</span></td>
+              <td>Source: wikipedia
+URL: https://en.wikipedia.org/wiki/President_of_the_United_Sta</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 100, 69)">0.000</span></td>
+              <td>0</td>
+              <td><span class="cat-tag">conflict</span></td>
+              <td>U.S. presidentDonald Trumpsays that Vance, Witkoff, andsenior presidential advis</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 100, 69)">0.000</span></td>
+              <td>0</td>
+              <td><span class="cat-tag">other</span></td>
+              <td>U.S. presidentDonald Trumpthreatens to impose 50%tariffson countries that supply</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 100, 69)">0.000</span></td>
+              <td>0</td>
+              <td><span class="cat-tag">conflict</span></td>
+              <td>U.S. presidentDonald Trumpthreatens to impose 50%tariffson countries that supply</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 100, 69)">0.000</span></td>
+              <td>0</td>
+              <td><span class="cat-tag">other</span></td>
+              <td>U.S. Secretary of StateMarco Rubioannounces that theState Departmenthas revoked</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 100, 69)">0.000</span></td>
+              <td>0</td>
+              <td><span class="cat-tag">other</span></td>
+              <td>Source: wikipedia
+URL: https://en.wikipedia.org/wiki/United_States_Secretary_of_</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 100, 69)">0.000</span></td>
+              <td>0</td>
+              <td><span class="cat-tag">other</span></td>
+              <td>U.S. Secretary of StateMarco Rubioannounces that theState Departmenthas revoked </td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 100, 69)">0.000</span></td>
+              <td>0</td>
+              <td><span class="cat-tag">other</span></td>
+              <td>U.S.andIsraeli warplanesstrikeIranian militarytargets onKharg Islandthat results</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 100, 69)">0.000</span></td>
+              <td>0</td>
+              <td><span class="cat-tag">other</span></td>
+              <td>U.S.andIsraeli warplanesstrikeIranian militarytargets onKharg Islandthat results</td>
+            </tr>
+            <tr>
+              <td><span class="q-badge" style="background:rgb(16, 100, 69)">0.000</span></td>
+              <td>0</td>
+              <td><span class="cat-tag">conflict</span></td>
+              <td>Vance says that the war in Iran will conclude &quot;very shortly&quot;, claiming that theU</td>
+            </tr></tbody>
+        </table>
+    </section>
+    
+<section><h2>Retrieval Samples</h2>
+<p class="note">What the memory_lookup tool returns for sample validation markets.</p>
+<div class="retrieval-card">
+  <div class="retrieval-query">Ahmed al-Sharaa out as leader of Syria by December 31, 2026?</div>
+  <div class="retrieval-meta">Market odds: <b>16%</b> | Category: <b>other</b> | Base rate: <b>0.188</b></div>
+  <table class="retrieval-table">
+    <thead><tr><th>Q</th><th>Relevance</th><th>Source</th><th>Fact</th></tr></thead>
+    <tbody>
+    <tr><td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td><td>0.500</td><td>Israel seeks Lebanon talks after bombard</td><td>By Parisa Hafezi, Maya Gebeily, Maayan Lubell and Ariba Shahid</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td><td>0.500</td><td>Japaneseprime ministerSanae Takaichisays</td><td>Japaneseprime ministerSanae Takaichisays thather governmentis planning to holdsu</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td><td>0.500</td><td>TheAl-Aqsa Mosque, theChurch of the Holy</td><td>TheAl-Aqsa Mosque, theChurch of the Holy Sepulchre, theWestern Wall, and other h</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 234, 69)">0.866</span></td><td>0.456</td><td>‘No more bending to Westminster’s will’ </td><td>‘No more bending to Westminster’s will’ if Plaid Cymru wins power, leader vows</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 177, 69)">0.503</span></td><td>0.456</td><td>Israel&#x27;s perpetual war with Iran may be </td><td>&quot;More pragmatic voices argue that what&#x27;s happening now in Lebanon, Gaza and Syria is a security-driven approach that may</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 177, 69)">0.503</span></td><td>0.452</td><td>Pakistan , Saudi Arabia , Turkey and Egy</td><td>Reports suggest that Saudi Arabia now wants to replace Israel with Syria as the transit country for afiber-optic cableco</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 177, 69)">0.503</span></td><td>0.450</td><td>Israel&#x27;s perpetual war with Iran may be </td><td>On Tuesday, just before the Jewish holiday of Passover, Prime Minister Netanyahu said Israel had inflicted 10 &quot;plagues&quot; </td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 100, 69)">0.000</span></td><td>0.445</td><td>Ceasefire or pause ? The Gulf held hosta</td><td>The above was evident in Gaza, theWest Bank, and Lebanon, and traces back to earlier wars with Egypt and Syria. In Gaza,</td></tr>
+    </tbody></table>
+</div>
+<div class="retrieval-card">
+  <div class="retrieval-query">Military action against Iran ends on April 15, 2026?</div>
+  <div class="retrieval-meta">Market odds: <b>0%</b> | Category: <b>conflict</b> | Base rate: <b>0.384</b></div>
+  <table class="retrieval-table">
+    <thead><tr><th>Q</th><th>Relevance</th><th>Source</th><th>Fact</th></tr></thead>
+    <tbody>
+    <tr><td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td><td>0.500</td><td>Israel seeks Lebanon talks after bombard</td><td>By Parisa Hafezi, Maya Gebeily, Maayan Lubell and Ariba Shahid</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td><td>0.500</td><td>Japaneseprime ministerSanae Takaichisays</td><td>Japaneseprime ministerSanae Takaichisays thather governmentis planning to holdsu</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td><td>0.500</td><td>TheAl-Aqsa Mosque, theChurch of the Holy</td><td>TheAl-Aqsa Mosque, theChurch of the Holy Sepulchre, theWestern Wall, and other h</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 224, 69)">0.803</span></td><td>0.451</td><td>The war on Iran: Nobody won, everyone pa</td><td>Intelligence assessments shared with the Trump administration before the escalation had apparently warned of this precis</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 212, 69)">0.723</span></td><td>0.448</td><td>Protests against the 2026 Iran warProtes</td><td>Protests against the 2026 Iran warProtests against the 2026 Iran war in the Unit</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 209, 69)">0.707</span></td><td>0.448</td><td>Protests against the 2026 Iran warProtes</td><td>Protests against the 2026 Iran warProtests against the 2026 Iran war in IsraelTh</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 218, 69)">0.765</span></td><td>0.445</td><td>First Thing: Ceasefire in peril as Israe</td><td>A Honolulu jury returned the verdict against Gerhardt Konig, 47, on Wednesday after a day of deliberations.</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 225, 69)">0.809</span></td><td>0.444</td><td>Israel&#x27;s perpetual war with Iran may be </td><td>Tzachi Hanegbi says Israel will continue its direct confrontation with regional enemies like Hezbollah, even if Washingt</td></tr>
+    </tbody></table>
+</div>
+<div class="retrieval-card">
+  <div class="retrieval-query">U.S. agrees to a new trade deal with &quot;Mexico&quot; before 2027?</div>
+  <div class="retrieval-meta">Market odds: <b>22%</b> | Category: <b>economics</b> | Base rate: <b>0.231</b></div>
+  <table class="retrieval-table">
+    <thead><tr><th>Q</th><th>Relevance</th><th>Source</th><th>Fact</th></tr></thead>
+    <tbody>
+    <tr><td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td><td>0.500</td><td>Israel seeks Lebanon talks after bombard</td><td>By Parisa Hafezi, Maya Gebeily, Maayan Lubell and Ariba Shahid</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td><td>0.500</td><td>Japaneseprime ministerSanae Takaichisays</td><td>Japaneseprime ministerSanae Takaichisays thather governmentis planning to holdsu</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td><td>0.500</td><td>TheAl-Aqsa Mosque, theChurch of the Holy</td><td>TheAl-Aqsa Mosque, theChurch of the Holy Sepulchre, theWestern Wall, and other h</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 205, 69)">0.679</span></td><td>0.493</td><td>Trump Administration Escalates Trade War</td><td>Trump Administration Escalates Trade War with New China Tariffs</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 217, 69)">0.757</span></td><td>0.464</td><td>Sidelined by Trump’s truce with Iran, Is</td><td>Sidelined by Trump’s truce with Iran, Israel pummels Lebanon – then agrees to talks</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 235, 69)">0.874</span></td><td>0.459</td><td>Why ceasefire deal with US has unsettled</td><td>Why ceasefire deal with US has unsettled Iran&#x27;s hardliners</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 201, 69)">0.655</span></td><td>0.456</td><td>Israel vows to continue fighting Hezboll</td><td>Israel vows to continue fighting Hezbollah but agrees to talks with Lebanon</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 100, 69)">0.000</span></td><td>0.447</td><td>IMF warns of looming inflation crisis on</td><td>However, it comes amid a stalling job market driven by shifts in trade and immigration policy in the US.</td></tr>
+    </tbody></table>
+</div>
+<div class="retrieval-card">
+  <div class="retrieval-query">Will Iran strike the United Kingdom by April 30, 2026?</div>
+  <div class="retrieval-meta">Market odds: <b>4%</b> | Category: <b>other</b> | Base rate: <b>0.188</b></div>
+  <table class="retrieval-table">
+    <thead><tr><th>Q</th><th>Relevance</th><th>Source</th><th>Fact</th></tr></thead>
+    <tbody>
+    <tr><td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td><td>0.500</td><td>Israel seeks Lebanon talks after bombard</td><td>By Parisa Hafezi, Maya Gebeily, Maayan Lubell and Ariba Shahid</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td><td>0.500</td><td>Japaneseprime ministerSanae Takaichisays</td><td>Japaneseprime ministerSanae Takaichisays thather governmentis planning to holdsu</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td><td>0.500</td><td>TheAl-Aqsa Mosque, theChurch of the Holy</td><td>TheAl-Aqsa Mosque, theChurch of the Holy Sepulchre, theWestern Wall, and other h</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 146, 69)">0.299</span></td><td>0.458</td><td>Attack on Saudi Arabian pipeline wiped o</td><td>Attack on Saudi Arabian pipeline wiped out 10 percent of kingdom&#x27;s oil export capacity</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 100, 69)">0.000</span></td><td>0.452</td><td>Pakistan , Saudi Arabia , Turkey and Egy</td><td>The Saudi kingdom has historically viewed this movement as a threat. But since Abdel Fattah el-Sisi came to power as Egy</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 144, 69)">0.290</span></td><td>0.449</td><td>2026 Iran war2025–2026 Iran–United State</td><td>2026 Iran war2025–2026 Iran–United States negotiationsIslamabad AccordUnited Sta</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 144, 69)">0.290</span></td><td>0.449</td><td>2025–2026 Iran–United States negotiation</td><td>2025–2026 Iran–United States negotiationsPakistan in the 2026 Iran warPakistanpr</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 144, 69)">0.290</span></td><td>0.449</td><td>2025–2026 Iran–United States negotiation</td><td>2025–2026 Iran–United States negotiationsIslamabad AccordUnited StatespresidentD</td></tr>
+    </tbody></table>
+</div>
+<div class="retrieval-card">
+  <div class="retrieval-query">Will the Iranian regime fall before 2027?</div>
+  <div class="retrieval-meta">Market odds: <b>20%</b> | Category: <b>other</b> | Base rate: <b>0.188</b></div>
+  <table class="retrieval-table">
+    <thead><tr><th>Q</th><th>Relevance</th><th>Source</th><th>Fact</th></tr></thead>
+    <tbody>
+    <tr><td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td><td>0.500</td><td>Israel seeks Lebanon talks after bombard</td><td>By Parisa Hafezi, Maya Gebeily, Maayan Lubell and Ariba Shahid</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td><td>0.500</td><td>Japaneseprime ministerSanae Takaichisays</td><td>Japaneseprime ministerSanae Takaichisays thather governmentis planning to holdsu</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 244, 69)">0.933</span></td><td>0.500</td><td>TheAl-Aqsa Mosque, theChurch of the Holy</td><td>TheAl-Aqsa Mosque, theChurch of the Holy Sepulchre, theWestern Wall, and other h</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 178, 69)">0.505</span></td><td>0.455</td><td>Iran&#x27;s focus on survival means same regi</td><td>If the regime survives the war, it will have to rebuild a country reeling from these crises.</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 199, 69)">0.645</span></td><td>0.452</td><td>Had Bush and Blair been punished for Ira</td><td>Today marks the 23rd anniversary of the fall of Baghdad, and the world is witnessing the same madness, bloodshed and hor</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 252, 69)">0.987</span></td><td>0.450</td><td>Does a US-Iran ceasefire mean the end of</td><td>After a US-Iran ceasefire deal, strikes slow but tensions remain. Will this hold or collapse?</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 178, 69)">0.505</span></td><td>0.449</td><td>Iran expert discusses whether the war ha</td><td>Iran expert discusses whether the war has made the Iranian regime stronger</td></tr>
+    <tr><td><span class="q-badge" style="background:rgb(16, 146, 69)">0.297</span></td><td>0.447</td><td>Thursday briefing: ​What difference will</td><td>As Peter put it in this analysis piece, having gambled on the war, Netanyahu has failed to secure the fall of the theocr</td></tr>
+    </tbody></table>
+</div>
+</section>
+
+
+    <section>
+      <h2>Prediction vs Market Odds</h2>
+      <p class="note">Each dot is one market. Dashed line = perfect prediction. Greener = closer to market odds.</p>
+      <svg width="450" height="450" xmlns="http://www.w3.org/2000/svg" style="font-family: -apple-system, sans-serif;">
+<line x1="50" y1="400.0" x2="400" y2="400.0" stroke="#e5e7eb"/>
+<line x1="50.0" y1="50" x2="50.0" y2="400" stroke="#e5e7eb"/>
+<text x="42" y="404.0" text-anchor="end" font-size="10" fill="#6b7280">0.0</text>
+<text x="50.0" y="416" text-anchor="middle" font-size="10" fill="#6b7280">0.0</text>
+<line x1="50" y1="330.0" x2="400" y2="330.0" stroke="#e5e7eb"/>
+<line x1="120.0" y1="50" x2="120.0" y2="400" stroke="#e5e7eb"/>
+<text x="42" y="334.0" text-anchor="end" font-size="10" fill="#6b7280">0.2</text>
+<text x="120.0" y="416" text-anchor="middle" font-size="10" fill="#6b7280">0.2</text>
+<line x1="50" y1="260.0" x2="400" y2="260.0" stroke="#e5e7eb"/>
+<line x1="190.0" y1="50" x2="190.0" y2="400" stroke="#e5e7eb"/>
+<text x="42" y="264.0" text-anchor="end" font-size="10" fill="#6b7280">0.4</text>
+<text x="190.0" y="416" text-anchor="middle" font-size="10" fill="#6b7280">0.4</text>
+<line x1="50" y1="190.0" x2="400" y2="190.0" stroke="#e5e7eb"/>
+<line x1="260.0" y1="50" x2="260.0" y2="400" stroke="#e5e7eb"/>
+<text x="42" y="194.0" text-anchor="end" font-size="10" fill="#6b7280">0.6</text>
+<text x="260.0" y="416" text-anchor="middle" font-size="10" fill="#6b7280">0.6</text>
+<line x1="50" y1="120.0" x2="400" y2="120.0" stroke="#e5e7eb"/>
+<line x1="330.0" y1="50" x2="330.0" y2="400" stroke="#e5e7eb"/>
+<text x="42" y="124.0" text-anchor="end" font-size="10" fill="#6b7280">0.8</text>
+<text x="330.0" y="416" text-anchor="middle" font-size="10" fill="#6b7280">0.8</text>
+<line x1="50" y1="50.0" x2="400" y2="50.0" stroke="#e5e7eb"/>
+<line x1="400.0" y1="50" x2="400.0" y2="400" stroke="#e5e7eb"/>
+<text x="42" y="54.0" text-anchor="end" font-size="10" fill="#6b7280">1.0</text>
+<text x="400.0" y="416" text-anchor="middle" font-size="10" fill="#6b7280">1.0</text>
+<line x1="50" y1="400" x2="400" y2="50" stroke="#d1d5db" stroke-width="1" stroke-dasharray="5,3"/>
+<circle cx="106.0" cy="334.2" r="5" fill="rgb(235,97,25)" opacity="0.7"/>
+<circle cx="97.2" cy="265.6" r="5" fill="rgb(244,171,133)" opacity="0.7"/>
+<circle cx="64.0" cy="334.2" r="5" fill="rgb(240,137,83)" opacity="0.7"/>
+<circle cx="170.8" cy="334.2" r="5" fill="rgb(240,140,88)" opacity="0.7"/>
+<circle cx="149.8" cy="334.2" r="5" fill="rgb(238,120,59)" opacity="0.7"/>
+<circle cx="83.2" cy="265.6" r="5" fill="rgb(246,184,152)" opacity="0.7"/>
+<circle cx="82.9" cy="265.6" r="5" fill="rgb(246,184,152)" opacity="0.7"/>
+<circle cx="193.5" cy="265.6" r="5" fill="rgb(235,96,24)" opacity="0.7"/>
+<circle cx="137.5" cy="334.2" r="5" fill="rgb(236,108,42)" opacity="0.7"/>
+<circle cx="156.8" cy="265.6" r="5" fill="rgb(237,114,50)" opacity="0.7"/>
+<circle cx="116.5" cy="334.2" r="5" fill="rgb(234,88,12)" opacity="0.7"/>
+<circle cx="59.1" cy="334.2" r="5" fill="rgb(240,142,90)" opacity="0.7"/>
+<circle cx="79.8" cy="334.2" r="5" fill="rgb(238,122,62)" opacity="0.7"/>
+<circle cx="384.2" cy="265.6" r="5" fill="rgb(227,237,253)" opacity="0.7"/>
+<circle cx="377.2" cy="265.6" r="5" fill="rgb(235,242,254)" opacity="0.7"/>
+<circle cx="51.4" cy="265.6" r="5" fill="rgb(249,214,196)" opacity="0.7"/>
+<circle cx="50.4" cy="265.6" r="5" fill="rgb(250,215,198)" opacity="0.7"/>
+<circle cx="73.1" cy="334.2" r="5" fill="rgb(239,128,71)" opacity="0.7"/>
+<circle cx="151.5" cy="334.2" r="5" fill="rgb(238,122,61)" opacity="0.7"/>
+<circle cx="61.9" cy="265.6" r="5" fill="rgb(248,204,182)" opacity="0.7"/>
+<circle cx="190.0" cy="265.6" r="5" fill="rgb(234,93,19)" opacity="0.7"/>
+<circle cx="86.8" cy="358.7" r="5" fill="rgb(234,92,18)" opacity="0.7"/>
+<circle cx="233.8" cy="265.6" r="5" fill="rgb(239,135,80)" opacity="0.7"/>
+<circle cx="97.2" cy="265.6" r="5" fill="rgb(244,171,133)" opacity="0.7"/>
+<circle cx="63.3" cy="334.2" r="5" fill="rgb(240,138,84)" opacity="0.7"/>
+<circle cx="184.8" cy="334.2" r="5" fill="rgb(242,153,107)" opacity="0.7"/>
+<circle cx="142.8" cy="334.2" r="5" fill="rgb(237,113,49)" opacity="0.7"/>
+<circle cx="123.5" cy="319.1" r="5" fill="rgb(234,95,22)" opacity="0.7"/>
+<circle cx="130.5" cy="319.1" r="5" fill="rgb(234,88,12)" opacity="0.7"/>
+<circle cx="88.5" cy="319.1" r="5" fill="rgb(239,128,70)" opacity="0.7"/>
+<circle cx="127.0" cy="319.1" r="5" fill="rgb(234,91,17)" opacity="0.7"/>
+<circle cx="393.0" cy="334.2" r="5" fill="rgb(140,182,249)" opacity="0.7"/>
+<circle cx="174.2" cy="334.2" r="5" fill="rgb(241,143,93)" opacity="0.7"/>
+<circle cx="72.8" cy="334.2" r="5" fill="rgb(239,129,71)" opacity="0.7"/>
+<circle cx="54.2" cy="358.7" r="5" fill="rgb(238,123,63)" opacity="0.7"/>
+<circle cx="55.2" cy="334.2" r="5" fill="rgb(241,145,96)" opacity="0.7"/>
+<circle cx="72.8" cy="334.2" r="5" fill="rgb(239,129,71)" opacity="0.7"/>
+<circle cx="165.5" cy="334.2" r="5" fill="rgb(239,135,81)" opacity="0.7"/>
+<circle cx="107.8" cy="334.2" r="5" fill="rgb(234,95,23)" opacity="0.7"/>
+<circle cx="50.7" cy="334.2" r="5" fill="rgb(241,150,102)" opacity="0.7"/>
+<circle cx="109.5" cy="334.2" r="5" fill="rgb(234,94,20)" opacity="0.7"/>
+<circle cx="64.0" cy="334.2" r="5" fill="rgb(240,137,83)" opacity="0.7"/>
+<circle cx="321.2" cy="334.2" r="5" fill="rgb(220,233,253)" opacity="0.7"/>
+<circle cx="60.9" cy="334.2" r="5" fill="rgb(240,140,88)" opacity="0.7"/>
+<circle cx="54.2" cy="334.2" r="5" fill="rgb(241,146,97)" opacity="0.7"/>
+<circle cx="62.6" cy="334.2" r="5" fill="rgb(240,138,85)" opacity="0.7"/>
+<circle cx="232.0" cy="265.6" r="5" fill="rgb(239,133,78)" opacity="0.7"/>
+<circle cx="52.5" cy="358.7" r="5" fill="rgb(238,125,65)" opacity="0.7"/>
+<circle cx="60.5" cy="265.6" r="5" fill="rgb(248,206,184)" opacity="0.7"/>
+<circle cx="62.2" cy="334.2" r="5" fill="rgb(240,139,86)" opacity="0.7"/>
+<circle cx="132.2" cy="334.2" r="5" fill="rgb(235,103,34)" opacity="0.7"/>
+<circle cx="50.7" cy="334.2" r="5" fill="rgb(241,150,102)" opacity="0.7"/>
+<circle cx="51.8" cy="319.5" r="5" fill="rgb(243,163,121)" opacity="0.7"/>
+<circle cx="67.8" cy="334.2" r="5" fill="rgb(239,133,78)" opacity="0.7"/>
+<circle cx="72.8" cy="334.2" r="5" fill="rgb(239,129,71)" opacity="0.7"/>
+<circle cx="53.1" cy="334.2" r="5" fill="rgb(241,147,98)" opacity="0.7"/>
+<circle cx="81.5" cy="265.6" r="5" fill="rgb(246,186,154)" opacity="0.7"/>
+<circle cx="81.8" cy="334.2" r="5" fill="rgb(238,120,59)" opacity="0.7"/>
+<circle cx="76.2" cy="334.2" r="5" fill="rgb(238,125,66)" opacity="0.7"/>
+<circle cx="158.2" cy="334.2" r="5" fill="rgb(239,128,70)" opacity="0.7"/>
+<circle cx="121.8" cy="334.2" r="5" fill="rgb(234,93,20)" opacity="0.7"/>
+<circle cx="51.8" cy="358.7" r="5" fill="rgb(238,125,66)" opacity="0.7"/>
+<circle cx="50.4" cy="334.2" r="5" fill="rgb(241,150,102)" opacity="0.7"/>
+<circle cx="56.6" cy="334.2" r="5" fill="rgb(241,144,94)" opacity="0.7"/>
+<circle cx="97.2" cy="265.6" r="5" fill="rgb(244,171,133)" opacity="0.7"/>
+<circle cx="51.4" cy="334.2" r="5" fill="rgb(241,149,101)" opacity="0.7"/>
+<circle cx="51.8" cy="334.2" r="5" fill="rgb(241,149,100)" opacity="0.7"/>
+<circle cx="379.3" cy="334.2" r="5" fill="rgb(155,191,250)" opacity="0.7"/>
+<circle cx="155.0" cy="268.1" r="5" fill="rgb(237,113,49)" opacity="0.7"/>
+<circle cx="113.0" cy="334.2" r="5" fill="rgb(234,90,15)" opacity="0.7"/>
+<circle cx="144.5" cy="334.2" r="5" fill="rgb(237,115,51)" opacity="0.7"/>
+<circle cx="56.0" cy="334.2" r="5" fill="rgb(241,145,95)" opacity="0.7"/>
+<circle cx="289.8" cy="358.7" r="5" fill="rgb(228,238,253)" opacity="0.7"/>
+<circle cx="78.3" cy="334.2" r="5" fill="rgb(238,123,64)" opacity="0.7"/>
+<circle cx="59.1" cy="334.2" r="5" fill="rgb(240,142,90)" opacity="0.7"/>
+<text x="225" y="442" text-anchor="middle" font-size="12" fill="#374151">Market Odds (Polymarket)</text>
+<text x="14" y="225" text-anchor="middle" font-size="12" fill="#374151" transform="rotate(-90, 14, 225)">Agent Prediction</text>
+<text x="400" y="40" text-anchor="end" font-size="11" fill="#6b7280">Brier = 0.0590 (n=75)</text>
+</svg>
+
+    </section>
+    
+
+    <section>
+      <h2>Per-Market Breakdown</h2>
+      <p class="note">Sorted by squared error (worst predictions first).</p>
+      <table class="market-table">
+        <thead><tr><th>Error</th><th>Market</th><th>Agent</th><th>Category</th><th>Question</th></tr></thead>
+        <tbody>
+        <tr>
+          <td style="color:rgb(234,88,12);font-weight:bold">0.6273</td>
+          <td><span class="prob-badge" style="background:rgb(234,94,21)">98%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>US x Iran meeting by June 30, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(234,88,12);font-weight:bold">0.5670</td>
+          <td><span class="prob-badge" style="background:rgb(236,107,40)">94%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Trump meet with Xi Jinping in 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(234,88,12);font-weight:bold">0.3446</td>
+          <td><span class="prob-badge" style="background:rgb(243,163,121)">78%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Iran strike Bahrain by April 30, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(234,88,12);font-weight:bold">0.3260</td>
+          <td><span class="prob-badge" style="background:rgb(235,103,33)">96%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Military action against Iran ends by April 15, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(234,88,12);font-weight:bold">0.3215</td>
+          <td><span class="prob-badge" style="background:rgb(247,193,165)">68%</span></td>
+          <td><span class="prob-badge" style="background:rgb(105,159,248)">12%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will United Russia (ER) gain the most seats in the next Russian parlia</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(234,88,12);font-weight:bold">0.3036</td>
+          <td><span class="prob-badge" style="background:rgb(236,109,43)">94%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Military action against Iran ends by April 26, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(245,177,141);font-weight:bold">0.1467</td>
+          <td><span class="prob-badge" style="background:rgb(59,130,246)">0%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Military action against Iran ends on April 23, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(245,180,147);font-weight:bold">0.1444</td>
+          <td><span class="prob-badge" style="background:rgb(60,131,246)">0%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Military action against Iran ends on April 15, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(249,212,193);font-weight:bold">0.1253</td>
+          <td><span class="prob-badge" style="background:rgb(70,137,246)">3%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Will Israel take military action in Gaza on April 7, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(250,217,200);font-weight:bold">0.1225</td>
+          <td><span class="prob-badge" style="background:rgb(72,138,246)">3%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>NATO/EU troops fighting in Ukraine in June 30, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(228,238,253);font-weight:bold">0.0864</td>
+          <td><span class="prob-badge" style="background:rgb(94,152,247)">9%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Will Russia test a nuclear weapon by September 30 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(223,235,253);font-weight:bold">0.0841</td>
+          <td><span class="prob-badge" style="background:rgb(95,153,247)">9%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Israel military action against Yemen by April 15, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(222,234,253);font-weight:bold">0.0835</td>
+          <td><span class="prob-badge" style="background:rgb(96,153,247)">10%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Iran nuclear test before 2027?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(180,207,251);font-weight:bold">0.0620</td>
+          <td><span class="prob-badge" style="background:rgb(111,163,248)">14%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>China x Taiwan military clash before 2027?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(180,207,251);font-weight:bold">0.0620</td>
+          <td><span class="prob-badge" style="background:rgb(111,163,248)">14%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Trump announces US x Iran ceasefire end by April 15, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(180,207,251);font-weight:bold">0.0620</td>
+          <td><span class="prob-badge" style="background:rgb(111,163,248)">14%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Will the U.S. test a nuclear weapon by December 31 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(158,193,250);font-weight:bold">0.0506</td>
+          <td><span class="prob-badge" style="background:rgb(60,131,246)">0%</span></td>
+          <td><span class="prob-badge" style="background:rgb(149,187,250)">23%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Mark Rutte say &quot;Oil&quot; or &quot;Energy&quot; during his speech on April 9?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(135,178,249);font-weight:bold">0.0388</td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Ukraine peace referendum scheduled by December 31?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(127,173,249);font-weight:bold">0.0350</td>
+          <td><span class="prob-badge" style="background:rgb(59,130,246)">0%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will the next diplomatic US-Iran meeting be in Qatar?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(126,173,249);font-weight:bold">0.0346</td>
+          <td><span class="prob-badge" style="background:rgb(59,130,246)">0%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Hassan Shariatmadari be head of state in Iran end of 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(126,173,249);font-weight:bold">0.0346</td>
+          <td><span class="prob-badge" style="background:rgb(59,130,246)">0%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Mahmoud Ahmadinejad be head of state in Iran end of 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(125,172,249);font-weight:bold">0.0339</td>
+          <td><span class="prob-badge" style="background:rgb(60,131,246)">0%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Trump and Putin meet next in Japan?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(124,171,249);font-weight:bold">0.0335</td>
+          <td><span class="prob-badge" style="background:rgb(60,131,246)">0%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Trump and Putin meet next in South Korea?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(121,170,248);font-weight:bold">0.0320</td>
+          <td><span class="prob-badge" style="background:rgb(62,132,246)">1%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Reza Pahlavi enter Iran by April 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(119,168,248);font-weight:bold">0.0310</td>
+          <td><span class="prob-badge" style="background:rgb(63,133,246)">1%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Iran strike Georgia by April 30, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(117,167,248);font-weight:bold">0.0299</td>
+          <td><span class="prob-badge" style="background:rgb(64,133,246)">2%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Benjamin Netanyahu enter Iran by June 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(116,166,248);font-weight:bold">0.0292</td>
+          <td><span class="prob-badge" style="background:rgb(65,134,246)">2%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Trump visit North Korea by April 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(114,165,248);font-weight:bold">0.0286</td>
+          <td><span class="prob-badge" style="background:rgb(66,134,246)">2%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will the People&#x27;s Bank of China decrease rates in April?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(113,164,248);font-weight:bold">0.0279</td>
+          <td><span class="prob-badge" style="background:rgb(198,218,252)">36%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>US x Iran permanent peace deal by May 31, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(110,162,248);font-weight:bold">0.0262</td>
+          <td><span class="prob-badge" style="background:rgb(69,136,246)">3%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Kharg Island no longer under Iranian control by April 15?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(110,162,248);font-weight:bold">0.0262</td>
+          <td><span class="prob-badge" style="background:rgb(69,136,246)">3%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Zelenskyy and Putin meet next in Turkey before 2027?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(107,160,248);font-weight:bold">0.0246</td>
+          <td><span class="prob-badge" style="background:rgb(71,137,246)">3%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Iran strike Burj Khalifa by April 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(107,160,248);font-weight:bold">0.0246</td>
+          <td><span class="prob-badge" style="background:rgb(194,216,252)">34%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Internet Access restored in Iran by May 31, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(104,159,248);font-weight:bold">0.0234</td>
+          <td><span class="prob-badge" style="background:rgb(72,138,246)">4%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Jared Kushner enter Iran by June 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(104,158,248);font-weight:bold">0.0231</td>
+          <td><span class="prob-badge" style="background:rgb(73,139,246)">4%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Iran strike the United Kingdom by April 30, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(103,158,248);font-weight:bold">0.0225</td>
+          <td><span class="prob-badge" style="background:rgb(73,139,246)">4%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Ukraine joins NATO before 2027?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(101,157,247);font-weight:bold">0.0219</td>
+          <td><span class="prob-badge" style="background:rgb(74,140,246)">4%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Foreign intervention in Gaza by April 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(101,157,247);font-weight:bold">0.0219</td>
+          <td><span class="prob-badge" style="background:rgb(74,140,246)">4%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Iran strike Afghanistan by April 30, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(98,155,247);font-weight:bold">0.0202</td>
+          <td><span class="prob-badge" style="background:rgb(188,212,251)">33%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Donald Trump visit Saudi Arabia in 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(97,154,247);font-weight:bold">0.0199</td>
+          <td><span class="prob-badge" style="background:rgb(253,246,242)">52%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Russia military action against Kyiv municipality by April 17?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(95,153,247);font-weight:bold">0.0188</td>
+          <td><span class="prob-badge" style="background:rgb(78,142,246)">5%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Pakistan send warships through the Strait of Hormuz by April 30, </td>
+        </tr>
+        <tr>
+          <td style="color:rgb(95,153,247);font-weight:bold">0.0185</td>
+          <td><span class="prob-badge" style="background:rgb(254,248,245)">52%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Israel conduct military action in Greater Beirut on April 10, 202</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(88,148,247);font-weight:bold">0.0151</td>
+          <td><span class="prob-badge" style="background:rgb(84,146,247)">6%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will any U.S. Senator enter Iran by June 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(88,148,247);font-weight:bold">0.0151</td>
+          <td><span class="prob-badge" style="background:rgb(84,146,247)">6%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will China invade Taiwan by September 30, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(88,148,247);font-weight:bold">0.0151</td>
+          <td><span class="prob-badge" style="background:rgb(84,146,247)">6%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Qatar recognize Israel by June 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(88,148,247);font-weight:bold">0.0149</td>
+          <td><span class="prob-badge" style="background:rgb(84,146,247)">7%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Modi out by December 31, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(87,148,247);font-weight:bold">0.0146</td>
+          <td><span class="prob-badge" style="background:rgb(102,157,247)">11%</span></td>
+          <td><span class="prob-badge" style="background:rgb(149,187,250)">23%</span></td>
+          <td><span class="cat-tag">economics</span></td>
+          <td>U.S. agrees to a new trade deal with &quot;European Union&quot; before 2027?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(87,148,247);font-weight:bold">0.0146</td>
+          <td><span class="prob-badge" style="background:rgb(180,207,251)">31%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Silver (SI) settle over $90 on the final trading day of June 2026</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(84,145,247);font-weight:bold">0.0128</td>
+          <td><span class="prob-badge" style="background:rgb(88,148,247)">8%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Silver (SI) settle over $140 on the final trading day of June 202</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(84,145,247);font-weight:bold">0.0128</td>
+          <td><span class="prob-badge" style="background:rgb(60,131,246)">0%</span></td>
+          <td><span class="prob-badge" style="background:rgb(105,159,248)">12%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will the Liberal Democratic Party of Russia (LDPR) win the most seats </td>
+        </tr>
+        <tr>
+          <td style="color:rgb(83,145,247);font-weight:bold">0.0123</td>
+          <td><span class="prob-badge" style="background:rgb(61,131,246)">1%</span></td>
+          <td><span class="prob-badge" style="background:rgb(105,159,248)">12%</span></td>
+          <td><span class="cat-tag">politics</span></td>
+          <td>Will Israel Katz be the next Prime Minister of Israel?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(81,144,247);font-weight:bold">0.0114</td>
+          <td><span class="prob-badge" style="background:rgb(90,150,247)">8%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Xi Jinping purge Li Xi in 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(81,144,247);font-weight:bold">0.0112</td>
+          <td><span class="prob-badge" style="background:rgb(63,133,246)">1%</span></td>
+          <td><span class="prob-badge" style="background:rgb(105,159,248)">12%</span></td>
+          <td><span class="cat-tag">politics</span></td>
+          <td>Will Avigdor Lieberman be the next Prime Minister of Israel?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(79,143,246);font-weight:bold">0.0106</td>
+          <td><span class="prob-badge" style="background:rgb(92,151,247)">8%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Kharg Island no longer under Iranian control by April 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(79,143,246);font-weight:bold">0.0104</td>
+          <td><span class="prob-badge" style="background:rgb(172,202,251)">29%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Naim Qassem out as Hezbollah’s secretary-general by June 30, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(77,141,246);font-weight:bold">0.0094</td>
+          <td><span class="prob-badge" style="background:rgb(94,152,247)">9%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Saudi Arabia recognize Israel by June 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(77,141,246);font-weight:bold">0.0094</td>
+          <td><span class="prob-badge" style="background:rgb(170,201,251)">28%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Iran leadership change by June 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(72,138,246);font-weight:bold">0.0067</td>
+          <td><span class="prob-badge" style="background:rgb(164,197,250)">27%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Trump post &quot;Predict&quot; or &quot;Prediction&quot; or &quot;Predicted&quot; on Truth Soci</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(71,137,246);font-weight:bold">0.0062</td>
+          <td><span class="prob-badge" style="background:rgb(178,206,251)">30%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Israel x Hamas Ceasefire Phase II by June 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(70,137,246);font-weight:bold">0.0059</td>
+          <td><span class="prob-badge" style="background:rgb(162,196,250)">26%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Ukraine signs peace deal with Russia before 2027?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(70,137,246);font-weight:bold">0.0059</td>
+          <td><span class="prob-badge" style="background:rgb(176,205,251)">30%</span></td>
+          <td><span class="prob-badge" style="background:rgb(206,224,252)">38%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Trump post &quot;AI&quot; or &quot;Artificial Intelligence&quot; on Truth Social this</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(66,134,246);font-weight:bold">0.0038</td>
+          <td><span class="prob-badge" style="background:rgb(157,192,250)">25%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Israel strike on Yemen by April 30, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(63,132,246);font-weight:bold">0.0022</td>
+          <td><span class="prob-badge" style="background:rgb(151,188,250)">24%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Lebanon recognize Israel by June 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(60,130,246);font-weight:bold">0.0008</td>
+          <td><span class="prob-badge" style="background:rgb(121,170,248)">16%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Ahmed al-Sharaa out as leader of Syria by December 31, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(60,130,246);font-weight:bold">0.0007</td>
+          <td><span class="prob-badge" style="background:rgb(219,232,253)">41%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Israel military action on Damascus by June 30, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(60,130,246);font-weight:bold">0.0005</td>
+          <td><span class="prob-badge" style="background:rgb(123,171,248)">16%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Donald Trump visit Ukraine in 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(59,130,246);font-weight:bold">0.0004</td>
+          <td><span class="prob-badge" style="background:rgb(141,182,249)">21%</span></td>
+          <td><span class="prob-badge" style="background:rgb(149,187,250)">23%</span></td>
+          <td><span class="cat-tag">economics</span></td>
+          <td>U.S. agrees to a new trade deal with &quot;Brazil&quot; before 2027?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(59,130,246);font-weight:bold">0.0003</td>
+          <td><span class="prob-badge" style="background:rgb(125,172,249)">17%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">politics</span></td>
+          <td>Will Hezbollah disarm by April 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(59,130,246);font-weight:bold">0.0003</td>
+          <td><span class="prob-badge" style="background:rgb(139,181,249)">20%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Will the Iranian regime fall before 2027?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(59,130,246);font-weight:bold">0.0003</td>
+          <td><span class="prob-badge" style="background:rgb(215,230,253)">40%</span></td>
+          <td><span class="prob-badge" style="background:rgb(209,226,252)">38%</span></td>
+          <td><span class="cat-tag">conflict</span></td>
+          <td>Pakistan x Afghanistan ceasefire by April 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(59,130,246);font-weight:bold">0.0002</td>
+          <td><span class="prob-badge" style="background:rgb(100,156,247)">10%</span></td>
+          <td><span class="prob-badge" style="background:rgb(105,159,248)">12%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Putin out as President of Russia by December 31, 2026?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(59,130,246);font-weight:bold">0.0001</td>
+          <td><span class="prob-badge" style="background:rgb(145,185,249)">22%</span></td>
+          <td><span class="prob-badge" style="background:rgb(149,187,250)">23%</span></td>
+          <td><span class="cat-tag">economics</span></td>
+          <td>U.S. agrees to a new trade deal with &quot;Mexico&quot; before 2027?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(59,130,246);font-weight:bold">0.0001</td>
+          <td><span class="prob-badge" style="background:rgb(129,175,249)">18%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Will Trump post &quot;Ass&quot; or &quot;Shit&quot; on Truth Social this week?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(59,130,246);font-weight:bold">0.0000</td>
+          <td><span class="prob-badge" style="background:rgb(133,177,249)">19%</span></td>
+          <td><span class="prob-badge" style="background:rgb(132,177,249)">19%</span></td>
+          <td><span class="cat-tag">markets</span></td>
+          <td>Israel x Syria security agreement by June 30?</td>
+        </tr>
+        <tr>
+          <td style="color:rgb(59,130,246);font-weight:bold">0.0000</td>
+          <td><span class="prob-badge" style="background:rgb(149,187,250)">23%</span></td>
+          <td><span class="prob-badge" style="background:rgb(149,187,250)">23%</span></td>
+          <td><span class="cat-tag">economics</span></td>
+          <td>U.S. agrees to a new trade deal with &quot;Canada&quot; before 2027?</td>
+        </tr></tbody>
+      </table>
+    </section>
+    
+</body>
+</html>
